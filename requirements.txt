@@ -1,0 +1,21 @@
+accelerate
+Pebble
+latex2sympy2==1.9.1
+word2number
+transformers>=4.47.0
+fastapi
+hf_transfer
+timeout-decorator
+numpy
+tqdm
+torch
+vllm==0.6.3
+datasets
+huggingface_hub
+pyyaml
+groq
+regex
+sympy==1.12
+python_dateutil
+antlr4-python3-runtime==4.11.1
+# flash-attn  # Recommended for performance, requires CUDA
