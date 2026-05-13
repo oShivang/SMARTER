@@ -93,6 +93,10 @@ def calibrate():
             sampling_params = SamplingParams(temperature=config.temperature, max_tokens=config.max_tokens, top_p=config.top_p, stop=["\n\n"], n=1, logprobs=10)
 
             for prob_idx, problem in enumerate(problems):
+                # Print progress to prevent the appearance of being "stuck"
+                if prob_idx % 5 == 0:
+                    logger.info(f"Processing Calibration Sample {prob_idx + 1}/{len(problems)}...")
+                
                 # SLM part
                 current_text = ""
                 steps_info = []
