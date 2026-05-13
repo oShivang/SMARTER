@@ -17,6 +17,7 @@ from sal.search.utils import build_conv, generate_k_steps_with_responses, genera
 from sal.models.reward_models import load_prm
 
 import sys
+sys.path.append("src")
 sys.path.append("src/evaluation")
 from evaluation.evaluate import evaluate
 from datasets import Dataset

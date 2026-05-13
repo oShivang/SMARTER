@@ -14,6 +14,8 @@
 # limitations under the License.
 
 import logging
+import sys
+sys.path.append("src")
 import random
 import numpy as np
 
