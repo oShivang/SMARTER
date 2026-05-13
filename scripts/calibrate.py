@@ -146,8 +146,8 @@ def calibrate():
         else:
             eval_name = "math" if "math" in ds_name or ds_name == "gsm8k" else ds_name
             temp_samples = [{"problem": p, "pred": r["slm_final_text"], "solution": dataset[idx]["answer"], "answer": dataset[idx]["answer"], "completions": []} for idx, (p, r) in enumerate(zip(problems, problem_results))]
-            _, slm_eval = evaluate(data_name=eval_name, prompt_type="cot", samples=temp_samples, pred_keys=["pred"])
-            slm_correct_list = [s["correct"][0] for s in slm_eval]
+            slm_eval_samples, _ = evaluate(data_name=eval_name, prompt_type="cot", samples=temp_samples, pred_keys=["pred"])
+            slm_correct_list = [s["correct"][0] for s in slm_eval_samples]
 
         best_ds_config = {"method": None, "threshold": 0, "acc": 0, "cost": 0}
         plt.figure(figsize=(10, 6))
