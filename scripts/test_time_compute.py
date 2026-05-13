@@ -38,8 +38,7 @@ from sal.search import \
     beam_search, \
     beam_search_conf, \
     smart_beam_search, \
-    smart_beam_search_conf, \
-    dvts
+    smart_beam_search_conf
 from datasets import Dataset
 logging.basicConfig(level=logging.INFO)
 
@@ -51,7 +50,6 @@ APPROACHES = {
     "beam_search_smart": smart_beam_search,
     "beam_search_conf": beam_search_conf,
     "beam_search_smart_conf": smart_beam_search_conf,
-    "dvts": dvts,
     "best_of_n": best_of_n,
     "best_of_n_smart": smart_best_of_n,
     "best_of_n_conf": best_of_n_conf,
