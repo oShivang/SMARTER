@@ -1,18 +1,3 @@
-#!/usr/bin/env python
-# Copyright 2024 The HuggingFace Inc. team. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 import sys
 import os
 sys.path.append(os.path.abspath("src"))
@@ -20,6 +5,7 @@ sys.path.append(os.path.abspath("src"))
 import logging
 import random
 import numpy as np
+import math
 
 import torch
 from vllm import LLM
@@ -104,10 +90,13 @@ def main():
         dtype = "bfloat16" if device_capability[0] >= 8 else "half"
         torch_dtype = torch.bfloat16 if device_capability[0] >= 8 else torch.float16
 
+        # Conservative VRAM allocation when loading two models
+        gpu_util = 0.35 if config.smart_search else config.gpu_memory_utilization
+
         draft_path = config.draft_model_path if config.draft_model_path else config.model_path
         slm = LLM(
             model=draft_path,
-            gpu_memory_utilization=config.gpu_memory_utilization,
+            gpu_memory_utilization=gpu_util,
             enable_prefix_caching=True,
             seed=config.seed,
             tensor_parallel_size=num_gpus,
@@ -115,6 +104,8 @@ def main():
             dtype=dtype,
         )
         
+        torch.cuda.empty_cache()
+
         llm = AutoModelForCausalLM.from_pretrained(
             config.model_path,
             device_map="auto",
@@ -166,7 +157,7 @@ def main():
                 approach_fn,
                 batched=True,
                 batch_size=config.search_batch_size,
-                fn_kwargs={"config": config, "llm": llm, "prm": prm},
+                fn_kwargs={"config": config, "llm": llm, "prm": prm, "slm": None},
                 desc="Running search",
                 load_from_cache_file=False,
             )
@@ -179,7 +170,7 @@ def main():
                 approach_fn,
                 batched=True,
                 batch_size=config.search_batch_size,
-                fn_kwargs={"config": config, "llm": llm, "prm": prm},
+                fn_kwargs={"config": config, "llm": llm, "prm": prm, "slm": None},
                 desc="Running search",
                 load_from_cache_file=False,
             )    
@@ -194,7 +185,12 @@ def main():
     from evaluation.evaluate import evaluate
     
     if config.approach == "best_of_n" or config.approach == "beam_search":
-        subsets = [2**i for i in range(config.n) if 2**i <= config.n]
+        # Calculate powers of 2 up to config.n, and explicitly include config.n
+        subsets = [2**i for i in range(int(math.log2(config.n)) + 1)]
+        if config.n not in subsets:
+            subsets.append(config.n)
+        subsets = sorted(list(set(subsets)))
+        
         keys = []
         for n in subsets:
             keys.extend([f"pred_weighted@{n}", f"pred_maj@{n}", f"pred_naive@{n}"])
