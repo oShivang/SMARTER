@@ -104,8 +104,9 @@ def main():
         dtype = "bfloat16" if device_capability[0] >= 8 else "half"
         torch_dtype = torch.bfloat16 if device_capability[0] >= 8 else torch.float16
 
+        draft_path = config.draft_model_path if config.draft_model_path else config.model_path
         slm = LLM(
-            model=config.draft_model_path,
+            model=draft_path,
             gpu_memory_utilization=config.gpu_memory_utilization,
             enable_prefix_caching=True,
             seed=config.seed,
