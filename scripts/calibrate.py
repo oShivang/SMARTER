@@ -130,9 +130,10 @@ def calibrate():
                 gt_str = "yes" if dataset[prob_idx]["answer"] else "no"
                 llm_fixable.append(gt_str in llm_text.lower())
             else:
-                temp_ds = Dataset.from_list([{"problem": problem, "pred": llm_text, "answer": gt}])
-                _, llm_eval = evaluate(data_name="math", samples=temp_ds, pred_keys=["pred"])
-                llm_fixable.append(llm_eval[0]["correct"][0])
+                # evaluate expects a list of dicts with 'completions' key
+                temp_samples = [{"problem": problem, "pred": llm_text, "answer": gt, "completions": []}]
+                _, llm_eval = evaluate(data_name="math", prompt_type="cot", samples=temp_samples, pred_keys=["pred"])
+                llm_fixable.append(llm_eval["acc"]["pred"] > 0)
 
         # UNLOAD LLM
         logger.info("Unloading LLM...")
@@ -140,12 +141,12 @@ def calibrate():
         clear_gpu_memory()
 
         # --- PHASE 3: Accuracy Evaluation & Sweeping ---
-        slm_results_ds = Dataset.from_list([{"problem": p, "pred": r["slm_final_text"], "answer": dataset[idx]["answer"]} for idx, (p, r) in enumerate(zip(problems, problem_results))])
         if ds_name == "boolq":
             slm_correct_list = [("yes" if dataset[idx]["answer"] else "no") in res["slm_final_text"].lower() for idx, res in enumerate(problem_results)]
         else:
             eval_name = "math" if "math" in ds_name or ds_name == "gsm8k" else ds_name
-            _, slm_eval = evaluate(data_name=eval_name, samples=slm_results_ds, pred_keys=["pred"])
+            temp_samples = [{"problem": p, "pred": r["slm_final_text"], "answer": dataset[idx]["answer"], "completions": []} for idx, (p, r) in enumerate(zip(problems, problem_results))]
+            _, slm_eval = evaluate(data_name=eval_name, prompt_type="cot", samples=temp_samples, pred_keys=["pred"])
             slm_correct_list = [s["correct"][0] for s in slm_eval]
 
         best_ds_config = {"method": None, "threshold": 0, "acc": 0, "cost": 0}
