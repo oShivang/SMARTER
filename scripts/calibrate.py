@@ -41,21 +41,24 @@ def calibrate():
 
     # Initialize models once
     num_gpus = torch.cuda.device_count()
+    model_path = str(config.model_path)
+    draft_model_path = str(config.draft_model_path) if config.draft_model_path else model_path
+
     slm = LLM(
-        model=config.draft_model_path if config.draft_model_path else config.model_path,
+        model=draft_model_path,
         gpu_memory_utilization=0.4,
         enable_prefix_caching=True,
         seed=config.seed,
-        tensor_parallel_size=num_gpus if num_gpus > 0 else 0,
+        tensor_parallel_size=num_gpus if num_gpus > 0 else 1,
         max_model_len=2048,
     )
     
     llm = AutoModelForCausalLM.from_pretrained(
-        config.model_path,
+        model_path,
         device_map="auto",
         torch_dtype=torch.bfloat16,
     ).eval()
-    llm_tokenizer = AutoTokenizer.from_pretrained(config.model_path)
+    llm_tokenizer = AutoTokenizer.from_pretrained(model_path)
 
     os.makedirs("outputs/calibration", exist_ok=True)
     all_dataset_results = {}
@@ -68,8 +71,7 @@ def calibrate():
         dataset = get_dataset(config)
         problems = dataset["problem"]
         
-        # ... (Previous collection and potential evaluation logic remains the same)
-        # I'll include the logic here for completeness as the previous replace might have truncated or we need to ensure it's all in one function
+        # 1. Collection
         
         sampling_params = SamplingParams(
             temperature=config.temperature,
