@@ -29,6 +29,7 @@ def calibrate():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument("--num_calibration_samples", type=int, default=50)
+    parser.add_argument("--num_full_samples", type=int, default=None)
     parser.add_argument("--datasets", type=str, default="math500,gsm8k,boolq")
     args, unknown = parser.parse_known_args()
 
@@ -184,7 +185,10 @@ def calibrate():
             f"--conf_strategy={best_ds_config['method']}",
             f"--threshold={best_ds_config['threshold']:.4f}"
         ]
-        # Run and capture output to get final accuracy
+        if args.num_full_samples:
+            cmd.append(f"--num_samples={args.num_full_samples}")
+            
+        # Run and capture output
         result = subprocess.run(cmd, capture_with_output=True, text=True) if hasattr(subprocess, "run") else None # Simplified for now
         subprocess.run(cmd)
 
