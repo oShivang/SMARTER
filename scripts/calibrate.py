@@ -47,6 +47,11 @@ def calibrate():
     model_path = str(config.model_path)
     draft_model_path = str(config.draft_model_path) if config.draft_model_path else model_path
 
+    # Detect if GPU supports bf16, else use fp16 (T4 fallback)
+    device_capability = torch.cuda.get_device_capability() if num_gpus > 0 else (0, 0)
+    dtype = "bfloat16" if device_capability[0] >= 8 else "half"
+    torch_dtype = torch.bfloat16 if device_capability[0] >= 8 else torch.float16
+
     slm = LLM(
         model=draft_model_path,
         gpu_memory_utilization=0.4,
@@ -54,12 +59,13 @@ def calibrate():
         seed=config.seed,
         tensor_parallel_size=num_gpus if num_gpus > 0 else 1,
         max_model_len=2048,
+        dtype=dtype,
     )
     
     llm = AutoModelForCausalLM.from_pretrained(
         model_path,
         device_map="auto",
-        torch_dtype=torch.bfloat16,
+        torch_dtype=torch_dtype,
     ).eval()
     llm_tokenizer = AutoTokenizer.from_pretrained(model_path)
 

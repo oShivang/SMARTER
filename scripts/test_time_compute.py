@@ -97,6 +97,12 @@ def main():
     
     if config.smart_search:                
         mp.set_start_method("spawn", force=True)
+        # Detect if GPU supports bf16, else use fp16 (T4 fallback)
+        num_gpus = torch.cuda.device_count()
+        device_capability = torch.cuda.get_device_capability() if num_gpus > 0 else (0, 0)
+        dtype = "bfloat16" if device_capability[0] >= 8 else "half"
+        torch_dtype = torch.bfloat16 if device_capability[0] >= 8 else torch.float16
+
         slm = LLM(
             model=config.draft_model_path,
             gpu_memory_utilization=config.gpu_memory_utilization,
@@ -104,12 +110,13 @@ def main():
             seed=config.seed,
             tensor_parallel_size=num_gpus,
             max_model_len=2048,
+            dtype=dtype,
         )
         
         llm = AutoModelForCausalLM.from_pretrained(
             config.model_path,
             device_map="auto",
-            torch_dtype=torch.bfloat16,
+            torch_dtype=torch_dtype,
         ).eval()
         
         if config.score_method == 'prm':
