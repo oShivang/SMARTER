@@ -86,7 +86,8 @@ def calibrate():
             
             logger.info("Loading SLM and LLM in Parallel...")
             slm = LLM(model=draft_model_path, gpu_memory_utilization=gpu_util, enable_prefix_caching=True, tensor_parallel_size=num_gpus if num_gpus > 0 else 1, max_model_len=2048, dtype=dtype)
-            llm = AutoModelForCausalLM.from_pretrained(model_path, device_map="auto", torch_dtype=torch_dtype).eval()
+            llm_device_map = "cuda:0" if num_gpus == 1 else "auto"
+            llm = AutoModelForCausalLM.from_pretrained(model_path, device_map=llm_device_map, torch_dtype=torch_dtype).eval()
             llm_tokenizer = AutoTokenizer.from_pretrained(model_path)
             
             sampling_params = SamplingParams(temperature=config.temperature, max_tokens=config.max_tokens, top_p=config.top_p, stop=["\n\n"], n=1, logprobs=10)
@@ -153,7 +154,8 @@ def calibrate():
 
             from transformers import AutoModelForCausalLM, AutoTokenizer
             logger.info("PHASE 2: Loading LLM (Transformers)...")
-            llm = AutoModelForCausalLM.from_pretrained(model_path, device_map="auto", torch_dtype=torch_dtype).eval()
+            llm_device_map = "cuda:0" if num_gpus == 1 else "auto"
+            llm = AutoModelForCausalLM.from_pretrained(model_path, device_map=llm_device_map, torch_dtype=torch_dtype).eval()
             llm_tokenizer = AutoTokenizer.from_pretrained(model_path)
             for prob_idx, problem in enumerate(problems):
                 if prob_idx % 2 == 0: logger.info(f"LLM Problem {prob_idx+1}/{len(problems)}...")

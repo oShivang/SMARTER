@@ -106,9 +106,10 @@ def main():
         
         torch.cuda.empty_cache()
 
+        llm_device_map = "cuda:0" if num_gpus == 1 else "auto"
         llm = AutoModelForCausalLM.from_pretrained(
             config.model_path,
-            device_map="auto",
+            device_map=llm_device_map,
             torch_dtype=torch_dtype,
         ).eval()
         
