@@ -17,5 +17,5 @@ groq
 regex
 sympy==1.12
 python_dateutil
-antlr4-python3-runtime==4.11.1
+antlr4-python3-runtime==4.7.2
 # flash-attn  # Recommended for performance, requires CUDA
