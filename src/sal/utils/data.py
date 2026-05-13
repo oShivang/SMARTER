@@ -32,18 +32,22 @@ def get_dataset(config: Config) -> Dataset:
         dataset = pd.read_csv(config.dataset_name + ".csv")
         dataset = Dataset.from_pandas(dataset)
     elif config.dataset_name == "prm_math500":
-        # load from jsonl file
         dataset = pd.read_json("train.jsonl", lines=True)
         dataset = Dataset.from_pandas(dataset)
-    elif config.dataset_name == "gsm8k":
-        dataset = load_dataset("gsm8k", "main", split=config.dataset_split, trust_remote_code=True)
+    elif config.dataset_name in ["gsm8k", "openai/gsm8k"]:
+        dataset = load_dataset("openai/gsm8k", "main", split=config.dataset_split)
         dataset = dataset.rename_column("question", "problem")
+    elif config.dataset_name in ["math500", "HuggingFaceH4/MATH-500"]:
+        dataset = load_dataset("HuggingFaceH4/MATH-500", split=config.dataset_split)
     elif config.dataset_name == "boolq":
-        dataset = load_dataset("google/boolq", split=config.dataset_split, trust_remote_code=True)
-        # Combine passage and question for BoolQ
+        dataset = load_dataset("google/boolq", split=config.dataset_split)
         dataset = dataset.map(lambda x: {"problem": f"Passage: {x['passage']}\nQuestion: {x['question']}"})
     else:
-        dataset = load_dataset(config.dataset_name, split=config.dataset_split, trust_remote_code=True)
+        # Fallback with trust_remote_code as a last resort
+        try:
+            dataset = load_dataset(config.dataset_name, split=config.dataset_split)
+        except Exception:
+            dataset = load_dataset(config.dataset_name, split=config.dataset_split, trust_remote_code=True)
 
     if config.dataset_start is not None and config.dataset_end is not None:
         dataset = dataset.select(range(config.dataset_start, config.dataset_end))
