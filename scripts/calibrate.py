@@ -54,7 +54,7 @@ def calibrate():
 
     slm = LLM(
         model=draft_model_path,
-        gpu_memory_utilization=0.4,
+        gpu_memory_utilization=0.35, # Slightly lower for T4
         enable_prefix_caching=True,
         seed=config.seed,
         tensor_parallel_size=num_gpus if num_gpus > 0 else 1,
@@ -91,8 +91,11 @@ def calibrate():
             logprobs=10,
         )
         
+        logger.info(f"Starting trajectory generation for {len(problems)} problems...")
         problem_results = []
-        for prob_idx, problem in enumerate(tqdm(problems, desc=f"SLM Trajectories ({ds_name})")):
+        for prob_idx, problem in enumerate(problems):
+            if prob_idx % 2 == 0:
+                logger.info(f"Processing problem {prob_idx+1}/{len(problems)}...")
             current_text = ""
             steps_info = []
             for i in range(config.num_iterations):
