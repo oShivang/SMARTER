@@ -24,13 +24,20 @@ from sal.models.reward_models import PRM
 from sal.utils.score import aggregate_scores, calculate_confidence_score, STRATEGY_MAP, needs_correction
 from sal.search.utils import build_conv
 
+_TOKENIZER_CACHE = {}
+
+def get_cached_tokenizer(model_path):
+    if model_path not in _TOKENIZER_CACHE:
+        _TOKENIZER_CACHE[model_path] = AutoTokenizer.from_pretrained(model_path)
+    return _TOKENIZER_CACHE[model_path]
+
 def smart_best_of_n_conf(x, config: Config, slm: LLM, prm: PRM, llm: None):
     # Setup tokenizers
     slm_tokenizer = slm.get_tokenizer()
     if config.custom_chat_template is not None:
         slm_tokenizer.chat_template = config.custom_chat_template
         
-    llm_tokenizer = AutoTokenizer.from_pretrained(config.model_path)
+    llm_tokenizer = get_cached_tokenizer(config.model_path)
     if config.custom_chat_template is not None:
         llm_tokenizer.chat_template = config.custom_chat_template
         
@@ -69,7 +76,8 @@ def smart_best_of_n_conf(x, config: Config, slm: LLM, prm: PRM, llm: None):
     strategy_idx = STRATEGY_MAP.get(config.conf_strategy, 2)
     
     # Step-by-step generation loop
-    for iterate_idx in tqdm(range(config.num_iterations), desc="Surgical Scaffolding Iterations"):
+    # Removed tqdm from inner loop to prevent Colab output freezing
+    for iterate_idx in range(config.num_iterations):
         active_trajs = [t for t in trajectories if not t["completed"]]
         if len(active_trajs) == 0:
             break
@@ -119,24 +127,36 @@ def smart_best_of_n_conf(x, config: Config, slm: LLM, prm: PRM, llm: None):
                 elif len(slm_tokenizer.encode(" ".join(traj["history"]))) > 2048:
                     traj["completed"] = True
                     
-        # 3. Surgical Intervention (LLM generates one replacement step)
+        # 3. Surgical Intervention (LLM generates replacement steps in BATCH)
         if fixes_needed:
-            for j, (i, traj, slm_text, slm_score, conv) in enumerate(fixes_needed):
+            # Prepare all prompts for batching
+            batch_prompts = []
+            for i, traj, slm_text, slm_score, conv in fixes_needed:
                 templated = llm_tokenizer.apply_chat_template(
                     conv, tokenize=False, add_generation_prompt=add_gen_prompt, continue_final_message=cont_final_msg
                 )
-                
-                input_ids = llm_tokenizer(templated, return_tensors="pt").to(llm.device)
-                new_ids = llm.generate(
-                    **input_ids,
+                batch_prompts.append(templated)
+            
+            # Batch Tokenize
+            llm_tokenizer.padding_side = "left"
+            inputs = llm_tokenizer(batch_prompts, return_tensors="pt", padding=True).to(llm.device)
+            
+            # Batch Generate
+            with torch.no_grad():
+                new_ids_all = llm.generate(
+                    **inputs,
                     stopping_criteria=[stopping_criteria],
                     generation_config=generation_config
-                )[:, input_ids["input_ids"].shape[1]:]
-                
-                llm_step = llm_tokenizer.decode(new_ids[0])
+                )[:, inputs["input_ids"].shape[1]:]
+            
+            batch_steps = llm_tokenizer.batch_decode(new_ids_all)
+            
+            # Distribute results
+            for j, (i, traj, slm_text, slm_score, conv) in enumerate(fixes_needed):
+                llm_step = batch_steps[j]
                 
                 # Ensure the LLM didn't just return an empty string
-                if not llm_step:
+                if not llm_step or llm_step.strip() == "":
                     llm_step = "\n\n"
                 
                 # 4. Append LLM step to history and return control to SLM
@@ -149,7 +169,7 @@ def smart_best_of_n_conf(x, config: Config, slm: LLM, prm: PRM, llm: None):
                 
                 if llm_step.endswith("\n\n"):
                     pass # continues loop seamlessly
-                elif len(new_ids[0]) >= config.max_tokens:
+                elif len(new_ids_all[j]) >= config.max_tokens:
                     traj["completed"] = True
                 else:
                     traj["completed"] = True

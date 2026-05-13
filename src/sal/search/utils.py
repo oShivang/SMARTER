@@ -213,43 +213,41 @@ def generate_k_steps_for_llm(
             for i in range(len(gen_results))
             if gen_results[i].stop_reason != "EOS"
         ]
+        if not current_gen:
+            break
+
         gen_prompts = [
             gen_result.initial_prompt + gen_result.lookahead_text
             for gen_result in current_gen
         ]
 
-        decoded_outputs = []
-        stop_reasons = []
-        num_completion_tokens = [] 
+        # Batch tokenization
+        tokenizer.padding_side = "left"
+        inputs = tokenizer(gen_prompts, return_tensors="pt", padding=True).to(llm.device)
         
-        for gen_prompt in gen_prompts:
-            input_ids = tokenizer(gen_prompt, return_tensors="pt").to(llm.device)
-            # Generate just the next step using large LLM
-            new_step = ""
-            new_ids = llm.generate(
-                **input_ids,
+        # Batch generation
+        with torch.no_grad():
+            new_ids_all = llm.generate(
+                **inputs,
                 stopping_criteria=[stopping_criteria],
                 generation_config=generation_config,
-            )[:, input_ids["input_ids"].shape[1]:]
-            new_step = tokenizer.decode(new_ids[0])
+            )[:, inputs["input_ids"].shape[1]:]
+        
+        decoded_outputs = tokenizer.batch_decode(new_ids_all)
+        
+        for idx, (gen_result, output) in enumerate(zip(current_gen, decoded_outputs)):
+            if not output:
+                output = "\n\n"
             
-            if not new_step:
-                new_step = "\n\n"  # Fallback if empty
-                
             # stop reason logic
             stop_reason = None
-            if new_step.endswith("\n\n"):
+            if output.endswith("\n\n"):
                 stop_reason = '\n\n'
-            elif len(new_ids[0]) >= config.max_tokens:
+            elif len(new_ids_all[idx]) >= config.max_tokens:
                 stop_reason = "length"
             else:
                 stop_reason = "EOS"
 
-            decoded_outputs.append(new_step)
-            stop_reasons.append(stop_reason)
-            num_completion_tokens.append(len(new_ids[0]))
-        
-        for gen_result, output, completion_tokens, stop_reason in zip(current_gen, decoded_outputs, num_completion_tokens, stop_reasons):
             if i == 0:
                 gen_result.first_step_text = output
                 gen_result.first_step_stop_reason = stop_reason
@@ -257,7 +255,7 @@ def generate_k_steps_for_llm(
                     gen_result.first_step_stop_reason = "EOS"
 
             gen_result.lookahead_text = gen_result.lookahead_text + output
-            gen_result.completion_tokens = completion_tokens
+            gen_result.completion_tokens = len(new_ids_all[idx])
             gen_result.stop_reason = stop_reason
             if gen_result.stop_reason is None:
                 gen_result.stop_reason = "EOS"

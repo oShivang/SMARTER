@@ -227,7 +227,12 @@ def _beam_search(batch_of_prompts, config: Config, slm: LLM, prm: PRM, llm: None
         continue_final_message = iterate_idx > 0
         add_generation_prompt = iterate_idx == 0
         
-        tokenizer = AutoTokenizer.from_pretrained(config.model_path)
+        # Move tokenizer loading outside or cache it
+        from transformers import AutoTokenizer
+        if not hasattr(slm, '_llm_tokenizer'):
+            slm._llm_tokenizer = AutoTokenizer.from_pretrained(config.model_path)
+        tokenizer = slm._llm_tokenizer
+        
         if config.custom_chat_template is not None:
             tokenizer.chat_template = config.custom_chat_template
         templated_convs = tokenizer.apply_chat_template(
