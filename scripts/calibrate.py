@@ -58,15 +58,16 @@ def calibrate():
     model_path = str(config.model_path)
     draft_model_path = str(config.draft_model_path) if config.draft_model_path else model_path
     
-    # Adaptive GPU Strategy
-    num_gpus, device_capability, total_vram = get_gpu_info()
-    dtype = "bfloat16" if device_capability[0] >= 8 else "half"
-    torch_dtype = torch.bfloat16 if device_capability[0] >= 8 else torch.float16
-    
-    # If we have enough VRAM (> 24GB), we can load models in parallel for speed.
-    # Otherwise, we use sequential loading to be safe.
-    use_parallel_loading = total_vram > 24
-    logger.info(f"GPU Detected: {total_vram:.1f}GB VRAM, Capability {device_capability}. Strategy: {'Parallel' if use_parallel_loading else 'Sequential'}")
+        # Adaptive Memory Strategy
+        num_gpus, device_capability, total_vram = get_gpu_info()
+        dtype = "bfloat16" if device_capability[0] >= 8 else "half"
+        torch_dtype = torch.bfloat16 if device_capability[0] >= 8 else torch.float16
+        
+        # Parallel mode needs more head-room; Sequential can be aggressive
+        use_parallel_loading = total_vram > 24
+        gpu_util = 0.4 if use_parallel_loading else 0.8
+        
+        logger.info(f"GPU Detected: {total_vram:.1f}GB VRAM. Strategy: {'Parallel' if use_parallel_loading else 'Sequential'} (Util: {gpu_util})")
 
     for ds_name in dataset_list:
         logger.info(f"\n{'='*20}\nProcessing Dataset: {ds_name}\n{'='*20}")
@@ -84,7 +85,7 @@ def calibrate():
             from transformers import AutoModelForCausalLM, AutoTokenizer
             
             logger.info("Loading SLM and LLM in Parallel...")
-            slm = LLM(model=draft_model_path, gpu_memory_utilization=0.4, enable_prefix_caching=True, tensor_parallel_size=num_gpus if num_gpus > 0 else 1, max_model_len=2048, dtype=dtype)
+            slm = LLM(model=draft_model_path, gpu_memory_utilization=gpu_util, enable_prefix_caching=True, tensor_parallel_size=num_gpus if num_gpus > 0 else 1, max_model_len=2048, dtype=dtype)
             llm = AutoModelForCausalLM.from_pretrained(model_path, device_map="auto", torch_dtype=torch_dtype).eval()
             llm_tokenizer = AutoTokenizer.from_pretrained(model_path)
             
@@ -130,7 +131,7 @@ def calibrate():
             # (Same as the previous sequential implementation)
             from vllm import LLM, SamplingParams
             logger.info("PHASE 1: Loading SLM (vLLM)...")
-            slm = LLM(model=draft_model_path, gpu_memory_utilization=0.8, enable_prefix_caching=True, tensor_parallel_size=num_gpus if num_gpus > 0 else 1, max_model_len=2048, dtype=dtype)
+            slm = LLM(model=draft_model_path, gpu_memory_utilization=gpu_util, enable_prefix_caching=True, tensor_parallel_size=num_gpus if num_gpus > 0 else 1, max_model_len=2048, dtype=dtype)
             sampling_params = SamplingParams(temperature=config.temperature, max_tokens=config.max_tokens, top_p=config.top_p, stop=["\n\n"], n=1, logprobs=10)
 
             for prob_idx, problem in enumerate(problems):
