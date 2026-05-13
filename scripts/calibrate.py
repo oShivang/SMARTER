@@ -130,8 +130,15 @@ def calibrate():
                 gt_str = "yes" if dataset[prob_idx]["answer"] else "no"
                 llm_fixable.append(gt_str in llm_text.lower())
             else:
-                # evaluate expects 'solution' for math, 'answer' for others
-                temp_samples = [{"problem": problem, "pred": llm_text, "solution": gt, "answer": gt, "completions": []}]
+                # evaluate expects 'solution' for math, 'answer' for others. 
+                # Also needs the prediction in 'completions' to avoid hanging.
+                temp_samples = [{
+                    "problem": problem, 
+                    "pred": llm_text, 
+                    "solution": gt, 
+                    "answer": gt, 
+                    "completions": [llm_text]
+                }]
                 _, llm_eval = evaluate(data_name="math", prompt_type="cot", samples=temp_samples, pred_keys=["pred"])
                 llm_fixable.append(llm_eval["acc"]["pred"] > 0)
 
@@ -145,9 +152,15 @@ def calibrate():
             slm_correct_list = [("yes" if dataset[idx]["answer"] else "no") in res["slm_final_text"].lower() for idx, res in enumerate(problem_results)]
         else:
             eval_name = "math" if "math" in ds_name or ds_name == "gsm8k" else ds_name
-            temp_samples = [{"problem": p, "pred": r["slm_final_text"], "solution": dataset[idx]["answer"], "answer": dataset[idx]["answer"], "completions": []} for idx, (p, r) in enumerate(zip(problems, problem_results))]
+            temp_samples = [{
+                "problem": p, 
+                "pred": r["slm_final_text"], 
+                "solution": dataset[idx]["answer"], 
+                "answer": dataset[idx]["answer"], 
+                "completions": [r["slm_final_text"]]
+            } for idx, (p, r) in enumerate(zip(problems, problem_results))]
             slm_eval_samples, _ = evaluate(data_name=eval_name, prompt_type="cot", samples=temp_samples, pred_keys=["pred"])
-            slm_correct_list = [s["correct"][0] for s in slm_eval_samples]
+            slm_correct_list = [s["correct_completions"][0] for s in slm_eval_samples]
 
         best_ds_config = {"method": None, "threshold": 0, "acc": 0, "cost": 0}
         plt.figure(figsize=(10, 6))
