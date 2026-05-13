@@ -1,9 +1,12 @@
+import sys
+import os
+sys.path.append(os.path.abspath("src"))
+
 import logging
 import argparse
 import numpy as np
 import torch
 import json
-import os
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from vllm import LLM, SamplingParams
@@ -16,9 +19,7 @@ from sal.utils.score import calculate_confidence_score, aggregate_scores, STRATE
 from sal.search.utils import build_conv, generate_k_steps_with_responses, generate_k_steps_for_llm
 from sal.models.reward_models import load_prm
 
-import sys
-sys.path.append("src")
-sys.path.append("src/evaluation")
+sys.path.append(os.path.abspath("src/evaluation"))
 from evaluation.evaluate import evaluate
 from datasets import Dataset
 

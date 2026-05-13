@@ -13,9 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 import sys
-sys.path.append("src")
+import os
+sys.path.append(os.path.abspath("src"))
+
+import logging
 import random
 import numpy as np
 
