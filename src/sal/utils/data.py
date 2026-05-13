@@ -35,6 +35,13 @@ def get_dataset(config: Config) -> Dataset:
         # load from jsonl file
         dataset = pd.read_json("train.jsonl", lines=True)
         dataset = Dataset.from_pandas(dataset)
+    elif config.dataset_name == "gsm8k":
+        dataset = load_dataset("gsm8k", "main", split=config.dataset_split, trust_remote_code=True)
+        dataset = dataset.rename_column("question", "problem")
+    elif config.dataset_name == "boolq":
+        dataset = load_dataset("google/boolq", split=config.dataset_split, trust_remote_code=True)
+        # Combine passage and question for BoolQ
+        dataset = dataset.map(lambda x: {"problem": f"Passage: {x['passage']}\nQuestion: {x['question']}"})
     else:
         dataset = load_dataset(config.dataset_name, split=config.dataset_split, trust_remote_code=True)
 

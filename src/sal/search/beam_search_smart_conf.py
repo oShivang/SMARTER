@@ -26,9 +26,7 @@ from sal.models.reward_models import PRM
 from .utils import Beam, build_conv, generate_k_steps_with_responses, last, generate_k_steps_for_llm
 
 logger = logging.getLogger()
-from sal.utils.score import aggregate_scores, calculate_confidence_score
-
-from transformers import AutoTokenizer
+from sal.utils.score import aggregate_scores, calculate_confidence_score, STRATEGY_MAP, needs_correction
 
 def _beam_search(batch_of_prompts, config: Config, slm: LLM, prm: PRM, llm: None) -> tuple:
     sampling_params = SamplingParams(
@@ -38,7 +36,7 @@ def _beam_search(batch_of_prompts, config: Config, slm: LLM, prm: PRM, llm: None
         stop=["\n\n"],
         include_stop_str_in_output=True,
         n=1,
-        logprobs=True, 
+        logprobs=10, 
     )
     
     beams: list[Beam] = []
@@ -98,7 +96,7 @@ def _beam_search(batch_of_prompts, config: Config, slm: LLM, prm: PRM, llm: None
                 max_tokens=config.max_tokens,
                 top_p=config.top_p,
                 n=1,
-                logprobs=True,
+                logprobs=10,
             )
 
         convs = [
@@ -162,13 +160,15 @@ def _beam_search(batch_of_prompts, config: Config, slm: LLM, prm: PRM, llm: None
             conf_scores.append([calculate_confidence_score(output.logprobs)])
         # order of likelihood_score, likelihood_mean_score, probs_mean_score
             
+        strategy_idx = STRATEGY_MAP.get(config.conf_strategy, 2)
+            
         conf_agg_scores = [
-            [score[0][-1]] # probs_mean_score
+            [score[0][strategy_idx]]
             for score in conf_scores
         ]
             
         for beam, score in zip(active_beams, conf_scores, strict=True):
-            beam.all_scores.append(score[0][-1]) # should append probs_mean_score
+            beam.all_scores.append(score[0][strategy_idx])
 
         # Now filter active_beams and agg_scores for beams that are completed
         conf_agg_scores = [
@@ -211,7 +211,7 @@ def _beam_search(batch_of_prompts, config: Config, slm: LLM, prm: PRM, llm: None
         # active_beams = [b for b in active_beams if not b.pruned]
         # agg_scores = [agg_scores[idx] for idx in top_indices]
         
-        re_indices = [top_idx for top_idx in top_indices if conf_agg_scores[top_idx][0] < config.threshold]
+        re_indices = [top_idx for top_idx in top_indices if needs_correction(conf_agg_scores[top_idx][0], config.threshold, config.conf_strategy)]
         if len(re_indices) == 0:
             continue
         

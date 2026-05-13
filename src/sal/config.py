@@ -33,6 +33,7 @@ class Config:
         0.4  # vllm is allocated 0.5 of GPU memory, the PRM uses the rest
     )
     threshold: float = 0.9
+    prm_threshold: float = 0.0 # added for best_of_n_smart
     prm_path: str = "RLHFlow/Llama3.1-8B-PRM-Deepseek-Data"
     # Output Related Options
     output_dir: str = None
@@ -65,7 +66,7 @@ class Config:
     max_tokens: int = 2048
     agg_strategy: str = "last"  # Options: "last", "min", "prod"
     # consider logprobs_based_score as a score ex) likelihood
-    conf_strategy: str = "probs_mean"  # Options: "log_sum", "log_mean", "probs_mean"
+    conf_strategy: str = "probs_mean"  # Options: "log_sum", "log_mean", "probs_mean", "entropy", "top_2_diff", "mean_least_3"
 
     # DVTS / Beam Search options
     beam_width: int = None  # m=4 in the paper

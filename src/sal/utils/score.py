@@ -38,22 +38,77 @@ def calculate_confidence_score(answer_tokens_logprobs_list):
         answer_tokens_logprobs_list (list of dict): [{token_id: Logprob(logprob=value, ...)}, {...}, ...]
 
     Returns:
-        tuple: (log_likelihood, likelihood)
-    * mean : likelihood(norm)
-    * sum할때 -> answer_tokens_logprobs_list의 갯수를 뽑을 수 있는데 = T, 
-    각 generation hyperparameter=e 
-    e^T
+        tuple: (likelihood_score, likelihood_mean_score, probs_mean_score, entropy, top_2_diff, mean_least_3)
     """
+    if not answer_tokens_logprobs_list:
+        return [0.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+
     log_likelihood_of_completion = sum(next(iter(logprob.values())).logprob for logprob in answer_tokens_logprobs_list)
     
     likelihood_score = np.exp(log_likelihood_of_completion)
     
-    T = len(answer_tokens_logprobs_list) if len(answer_tokens_logprobs_list) > 0 else 1
+    T = len(answer_tokens_logprobs_list)
     likelihood_mean_score = np.exp(log_likelihood_of_completion / T)
     
     probs_mean_score = np.mean([np.exp(next(iter(logprob.values())).logprob) for logprob in answer_tokens_logprobs_list])
     
-    return [likelihood_score, likelihood_mean_score, probs_mean_score]
+    # New metrics
+    entropies = []
+    top_2_diffs = []
+    mean_least_3s = []
+    
+    for logprob_dict in answer_tokens_logprobs_list:
+        # Extract logprobs and convert to probabilities
+        # vllm Logprob objects have a .logprob attribute
+        logprobs = [lp.logprob for lp in logprob_dict.values()]
+        probs = np.exp(logprobs)
+        
+        # 1. Entropy: -sum(p * log(p))
+        entropy = -np.sum(probs * np.array(logprobs))
+        entropies.append(entropy)
+        
+        # 2. Top 2 Diff: p1 - p2
+        if len(probs) >= 2:
+            # probs are usually already sorted by vllm, but let's be sure
+            sorted_probs = np.sort(probs)[::-1]
+            top_2_diffs.append(sorted_probs[0] - sorted_probs[1])
+        else:
+            top_2_diffs.append(probs[0] if len(probs) > 0 else 1.0)
+            
+        # 3. Mean Least 3: mean of the 3 smallest probabilities
+        if len(probs) >= 3:
+            least_3 = np.sort(probs)[:3]
+            mean_least_3s.append(np.mean(least_3))
+        elif len(probs) > 0:
+            mean_least_3s.append(np.mean(probs))
+        else:
+            mean_least_3s.append(0.0)
+            
+    entropy_score = np.mean(entropies)
+    top_2_diff_score = np.mean(top_2_diffs)
+    mean_least_3_score = np.mean(mean_least_3s)
+    
+    return [likelihood_score, likelihood_mean_score, probs_mean_score, entropy_score, top_2_diff_score, mean_least_3_score]
+
+
+STRATEGY_MAP = {
+    "likelihood": 0,
+    "likelihood_mean": 1,
+    "probs_mean": 2,
+    "entropy": 3,
+    "top_2_diff": 4,
+    "mean_least_3": 5,
+}
+
+def needs_correction(score, threshold, strategy):
+    if strategy == "entropy":
+        return score > threshold
+    elif strategy == "mean_least_3":
+        return score > threshold
+    elif strategy == "top_2_diff":
+        return score < threshold
+    else: # probs_mean, likelihood, etc.
+        return score < threshold
 
 
 def aggregate_scores(

@@ -588,6 +588,8 @@ def parse_ground_truth(example: Dict[str, Any], data_name):
         gt_ans = extract_answer(gt_cot, data_name)
     elif data_name == "gsm8k":
         gt_cot, gt_ans = example["answer"].split("####")
+    elif data_name == "boolq":
+        gt_cot, gt_ans = None, "yes" if example["answer"] else "no"
     elif data_name == "svamp":
         gt_cot, gt_ans = example["Equation"], example["Answer"]
     elif data_name == "asdiv":

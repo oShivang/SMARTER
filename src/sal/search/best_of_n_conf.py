@@ -56,7 +56,7 @@ def best_of_n_conf(x, config: Config, llm: LLM, prm: PRM):
         max_tokens=config.max_tokens,
         top_p=config.top_p,
         n=1,  # Since we've already duplicated the prompt_token_ids, we only need to generate 1 completion per prompt
-        logprobs=True, # for extract tokens' logprobs at vllm, set logprobs=True
+        logprobs=10, # for extract tokens' logprobs at vllm
     )
 
     responses = llm.generate(
@@ -69,6 +69,18 @@ def best_of_n_conf(x, config: Config, llm: LLM, prm: PRM):
             f"Generated {len(responses)} responses instead of {len(x['problem'] * config.n)}"
         )
 
+    STRATEGY_MAP = {
+        "likelihood": 0,
+        "likelihood_mean": 1,
+        "probs_mean": 2,
+        "entropy": 3,
+        "top_2_diff": 4,
+        "mean_least_3": 5,
+    }
+    strategy_idx = STRATEGY_MAP.get(config.conf_strategy, 2)
+
+    agg_scores = [[] for _ in range(len(x["problem"]))]
+
     for i in range(len(completions)):
         completions[i] = [
             output.text
@@ -80,18 +92,10 @@ def best_of_n_conf(x, config: Config, llm: LLM, prm: PRM):
             for r in responses[i * config.n : (i + 1) * config.n]
             for output in r.outputs
         ]
-        completion_likelihood_mean[i] = [
-            calculate_likelihood_mean(output.logprobs)
-            for r in responses[i * config.n : (i + 1) * config.n]
-            for output in r.outputs
-        ]
-        completion_likelihood[i] = [
-            calculate_likelihood(output.logprobs)
-            for r in responses[i * config.n : (i + 1) * config.n]
-            for output in r.outputs
-        ]
-        completion_tokenprobs_mean[i] = [
-            calculate_token_probs_mean(output.logprobs)
+        
+        # Calculate scores based on the chosen strategy
+        agg_scores[i] = [
+            calculate_confidence_score(output.logprobs)[strategy_idx]
             for r in responses[i * config.n : (i + 1) * config.n]
             for output in r.outputs
         ]
@@ -101,21 +105,17 @@ def best_of_n_conf(x, config: Config, llm: LLM, prm: PRM):
         if len(c) != config.n:
             raise ValueError(f"Generated {len(c)} completions instead of {config.n}")
 
-    scores = prm.score(x["problem"], completions)
-    agg_scores_prm = [
-        [aggregate_scores(s, config.agg_strategy) for s in score] for score in scores
-    ]
-
-    # select which score will be using in prediction.
-    if config.logprobs_score_strategy == "log_sum":
-        agg_scores = completion_likelihood
-    elif config.logprobs_score_strategy == "log_mean":
-        agg_scores = completion_likelihood_mean
-    elif config.logprobs_score_strategy == "probs_mean":
-        agg_scores = completion_tokenprobs_mean
-
     # Select the completion with the highest score
-    pred = [completion[np.argmax(s)] for completion, s in zip(completions, agg_scores)]
+    # Note: for entropy and mean_least_3, higher might mean LOWER confidence, 
+    # but for ranking we usually want highest confidence.
+    # However, if the user explicitly chooses entropy for ranking, we'll follow their choice (argmax).
+    # You might want to argmin for entropy, but to keep it consistent with argmax, 
+    # we could invert it, but let's stick to the selected strategy.
+    
+    # Actually, for ranking, we should probably stick to argmax(probs_mean) unless told otherwise.
+    # But I'll use the selected strategy.
+    pred_indices = [np.argmax(s) if config.conf_strategy not in ["entropy", "mean_least_3"] else np.argmin(s) for s in agg_scores]
+    pred = [completion[idx] for completion, idx in zip(completions, pred_indices)]
 
     x["completions"] = completions
     x["pred"] = pred
