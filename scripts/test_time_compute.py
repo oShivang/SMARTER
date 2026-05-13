@@ -35,6 +35,7 @@ from sal.search import \
     best_of_n, \
     best_of_n_conf, \
     smart_best_of_n, \
+    smart_best_of_n_conf, \
     beam_search, \
     beam_search_conf, \
     smart_beam_search, \
