@@ -9,14 +9,13 @@ import torch
 import json
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-from vllm import LLM, SamplingParams
-from transformers import AutoModelForCausalLM, AutoTokenizer
 import copy
+import gc
 
 from sal.config import Config
 from sal.utils.data import get_dataset
-from sal.utils.score import calculate_confidence_score, aggregate_scores, STRATEGY_MAP, needs_correction
-from sal.search.utils import build_conv, generate_k_steps_with_responses, generate_k_steps_for_llm
+from sal.utils.score import calculate_confidence_score, STRATEGY_MAP, needs_correction
+from sal.search.utils import build_conv
 from sal.models.reward_models import load_prm
 
 sys.path.append(os.path.abspath("src/evaluation"))
@@ -25,6 +24,11 @@ from datasets import Dataset
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+def clear_gpu_memory():
+    gc.collect()
+    torch.cuda.empty_cache()
+    torch.cuda.ipc_collect()
 
 def calibrate():
     parser = argparse.ArgumentParser()
@@ -40,47 +44,37 @@ def calibrate():
     config = h4_parser.parse_yaml_file(os.path.abspath(args.config))[0]
     
     dataset_list = args.datasets.split(",")
-    results_summary = []
+    os.makedirs("outputs/calibration", exist_ok=True)
+    all_dataset_results = {}
 
-    # Initialize models once
-    num_gpus = torch.cuda.device_count()
     model_path = str(config.model_path)
     draft_model_path = str(config.draft_model_path) if config.draft_model_path else model_path
-
-    # Detect if GPU supports bf16, else use fp16 (T4 fallback)
+    
+    # Detect GPU capability
+    num_gpus = torch.cuda.device_count()
     device_capability = torch.cuda.get_device_capability() if num_gpus > 0 else (0, 0)
     dtype = "bfloat16" if device_capability[0] >= 8 else "half"
     torch_dtype = torch.bfloat16 if device_capability[0] >= 8 else torch.float16
 
-    slm = LLM(
-        model=draft_model_path,
-        gpu_memory_utilization=0.35, # Slightly lower for T4
-        enable_prefix_caching=True,
-        seed=config.seed,
-        tensor_parallel_size=num_gpus if num_gpus > 0 else 1,
-        max_model_len=2048,
-        dtype=dtype,
-    )
-    
-    llm = AutoModelForCausalLM.from_pretrained(
-        model_path,
-        device_map="auto",
-        torch_dtype=torch_dtype,
-    ).eval()
-    llm_tokenizer = AutoTokenizer.from_pretrained(model_path)
-
-    os.makedirs("outputs/calibration", exist_ok=True)
-    all_dataset_results = {}
-
     for ds_name in dataset_list:
-        logger.info(f"\n{'='*20}\nCalibrating on Dataset: {ds_name}\n{'='*20}")
+        logger.info(f"\n{'='*20}\nProcessing Dataset: {ds_name}\n{'='*20}")
         config.dataset_name = ds_name
         config.num_samples = args.num_calibration_samples
-        
         dataset = get_dataset(config)
         problems = dataset["problem"]
-        
-        # 1. Collection
+
+        # --- PHASE 1: SLM Trajectories ---
+        logger.info("Loading SLM (vLLM)...")
+        from vllm import LLM, SamplingParams
+        slm = LLM(
+            model=draft_model_path,
+            gpu_memory_utilization=0.8,
+            enable_prefix_caching=True,
+            seed=config.seed,
+            tensor_parallel_size=num_gpus if num_gpus > 0 else 1,
+            max_model_len=2048,
+            dtype=dtype,
+        )
         
         sampling_params = SamplingParams(
             temperature=config.temperature,
@@ -90,12 +84,11 @@ def calibrate():
             n=1,
             logprobs=10,
         )
-        
-        logger.info(f"Starting trajectory generation for {len(problems)} problems...")
+
         problem_results = []
+        logger.info(f"Generating trajectories for {len(problems)} problems...")
         for prob_idx, problem in enumerate(problems):
-            if prob_idx % 2 == 0:
-                logger.info(f"Processing problem {prob_idx+1}/{len(problems)}...")
+            if prob_idx % 2 == 0: logger.info(f"SLM Problem {prob_idx+1}/{len(problems)}...")
             current_text = ""
             steps_info = []
             for i in range(config.num_iterations):
@@ -110,13 +103,28 @@ def calibrate():
                 if output.stop_reason == "EOS" or output.text == "": break
             problem_results.append({"slm_final_text": current_text, "steps": steps_info})
 
+        # UNLOAD SLM
+        logger.info("Unloading SLM...")
+        del slm
+        clear_gpu_memory()
+
+        # --- PHASE 2: LLM Potential ---
+        logger.info("Loading LLM (Transformers)...")
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+        llm = AutoModelForCausalLM.from_pretrained(model_path, device_map="auto", torch_dtype=torch_dtype).eval()
+        llm_tokenizer = AutoTokenizer.from_pretrained(model_path)
+
         llm_fixable = []
-        for prob_idx, problem in enumerate(tqdm(problems, desc=f"LLM Potential ({ds_name})")):
+        logger.info(f"Checking LLM potential for {len(problems)} problems...")
+        for prob_idx, problem in enumerate(problems):
+            if prob_idx % 2 == 0: logger.info(f"LLM Problem {prob_idx+1}/{len(problems)}...")
             conv = build_conv(problem, "", config.system_prompt)
             templated = llm_tokenizer.apply_chat_template(conv, tokenize=False, add_generation_prompt=True)
             input_ids = llm_tokenizer(templated, return_tensors="pt").to(llm.device)
-            out_ids = llm.generate(**input_ids, max_new_tokens=config.max_tokens)
+            with torch.no_grad():
+                out_ids = llm.generate(**input_ids, max_new_tokens=config.max_tokens)
             llm_text = llm_tokenizer.decode(out_ids[0][input_ids.input_ids.shape[1]:], skip_special_tokens=True)
+            
             gt = dataset[prob_idx].get("answer", "")
             if ds_name == "boolq":
                 gt_str = "yes" if dataset[prob_idx]["answer"] else "no"
@@ -124,88 +132,70 @@ def calibrate():
             else:
                 temp_ds = Dataset.from_list([{"problem": problem, "pred": llm_text, "answer": gt}])
                 _, llm_eval = evaluate(data_name="math", samples=temp_ds, pred_keys=["pred"])
-                llm_fixable.append(llm_eval["acc"]["pred"] > 0)
+                llm_fixable.append(llm_eval[0]["correct"][0])
 
+        # UNLOAD LLM
+        logger.info("Unloading LLM...")
+        del llm
+        clear_gpu_memory()
+
+        # --- PHASE 3: Accuracy Evaluation & Sweeping ---
         slm_results_ds = Dataset.from_list([{"problem": p, "pred": r["slm_final_text"], "answer": dataset[idx]["answer"]} for idx, (p, r) in enumerate(zip(problems, problem_results))])
         if ds_name == "boolq":
             slm_correct_list = [("yes" if dataset[idx]["answer"] else "no") in res["slm_final_text"].lower() for idx, res in enumerate(problem_results)]
         else:
-            _, slm_eval = evaluate(data_name=("math" if "math" in ds_name or ds_name == "gsm8k" else ds_name), samples=slm_results_ds, pred_keys=["pred"])
+            eval_name = "math" if "math" in ds_name or ds_name == "gsm8k" else ds_name
+            _, slm_eval = evaluate(data_name=eval_name, samples=slm_results_ds, pred_keys=["pred"])
             slm_correct_list = [s["correct"][0] for s in slm_eval]
 
-        # Best Method Sweep with Visualization
         best_ds_config = {"method": None, "threshold": 0, "acc": 0, "cost": 0}
         plt.figure(figsize=(10, 6))
         method_stats = {}
 
         for method in ["probs_mean", "entropy", "top_2_diff", "mean_least_3"]:
-            logger.info(f"Sweeping {method} for {ds_name}...")
             all_scores = [step["scores"][method] for res in problem_results for step in res["steps"]]
             if not all_scores: continue
-            
             thresholds = np.linspace(min(all_scores), max(all_scores), 20)
             accs, costs = [], []
             for tau in thresholds:
                 correct = 0
                 triggered_count = 0
-                for i, res in enumerate(problem_results):
-                    triggered = any(needs_correction(step["scores"][method], tau, method) for step in res["steps"])
+                for i in range(len(problems)):
+                    triggered = any(needs_correction(step["scores"][method], tau, method) for step in problem_results[i]["steps"])
                     if triggered:
                         triggered_count += 1
                         if llm_fixable[i]: correct += 1
                     else:
                         if slm_correct_list[i]: correct += 1
-                
-                cur_acc = (correct / len(problems)) * 100
-                cur_cost = (triggered_count / len(problems)) * 100
-                accs.append(cur_acc)
-                costs.append(cur_cost)
-                
-                if cur_acc > best_ds_config["acc"]:
-                    best_ds_config = {"method": method, "threshold": tau, "acc": cur_acc, "cost": cur_cost}
+                accs.append((correct / len(problems)) * 100)
+                costs.append((triggered_count / len(problems)) * 100)
+            
+            # Elbow logic: find max acc with min cost (simplified: best acc in test run)
+            best_idx = np.argmax(accs)
+            if accs[best_idx] > best_ds_config["acc"]:
+                best_ds_config = {"method": method, "threshold": thresholds[best_idx], "acc": accs[best_idx], "cost": costs[best_idx]}
 
             method_stats[method] = {"thresholds": thresholds.tolist(), "accuracies": accs, "costs": costs}
             plt.plot(costs, accs, marker='o', label=method)
 
         plt.xlabel("Cost (% LLM Calls)")
         plt.ylabel("Accuracy (%)")
-        plt.title(f"Elbow Graph - Accuracy vs Cost ({ds_name})")
-        plt.legend()
-        plt.grid(True)
-        plot_path = f"outputs/calibration/elbow_{ds_name}.png"
-        plt.savefig(plot_path)
-        plt.close()
-        logger.info(f"Elbow graph saved to {plot_path}")
+        plt.title(f"Elbow Graph - {ds_name}")
+        plt.legend(); plt.grid(True)
+        plt.savefig(f"outputs/calibration/elbow_{ds_name}.png"); plt.close()
 
-        all_dataset_results[ds_name] = {
-            "best_config": best_ds_config,
-            "all_methods": method_stats
-        }
+        all_dataset_results[ds_name] = {"best_config": best_ds_config, "all_methods": method_stats}
+        logger.info(f"Best for {ds_name}: {best_ds_config['method']} @ {best_ds_config['threshold']:.4f}")
 
-        logger.info(f"Best for {ds_name}: {best_ds_config['method']} @ {best_ds_config['threshold']:.4f} (Calib Acc: {best_ds_config['acc']:.1f}%)")
-        
-        # 4. FULL RUN
-        logger.info(f"Performing FULL RUN on {ds_name} using {best_ds_config['method']}...")
+        # --- PHASE 4: FULL RUN ---
         import subprocess
-        cmd = [
-            "python", "scripts/test_time_compute.py", args.config,
-            f"--dataset_name={ds_name}",
-            "--smart_search=True",
-            "--score_method=conf",
-            f"--conf_strategy={best_ds_config['method']}",
-            f"--threshold={best_ds_config['threshold']:.4f}"
-        ]
-        if args.num_full_samples:
-            cmd.append(f"--num_samples={args.num_full_samples}")
-            
-        # Run and capture output
-        result = subprocess.run(cmd, capture_with_output=True, text=True) if hasattr(subprocess, "run") else None # Simplified for now
+        cmd = ["python", "scripts/test_time_compute.py", args.config, f"--dataset_name={ds_name}", "--smart_search=True", "--score_method=conf", f"--conf_strategy={best_ds_config['method']}", f"--threshold={best_ds_config['threshold']:.4f}"]
+        if args.num_full_samples: cmd.append(f"--num_samples={args.num_full_samples}")
         subprocess.run(cmd)
 
-    # Save all calibration results to JSON
     with open("outputs/calibration/calibration_summary.json", "w") as f:
         json.dump(all_dataset_results, f, indent=4)
-    logger.info("Calibration summary saved to outputs/calibration/calibration_summary.json")
+    logger.info("Calibration complete. Summary saved.")
 
 if __name__ == "__main__":
     calibrate()
