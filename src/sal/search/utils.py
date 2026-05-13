@@ -231,20 +231,19 @@ def generate_k_steps_for_llm(
                 stopping_criteria=[stopping_criteria],
                 generation_config=generation_config,
             )[:, input_ids["input_ids"].shape[1]:]
-            new_step = tokenizer.decode(new_ids[0]) #, skip_special_tokens=True)
+            new_step = tokenizer.decode(new_ids[0])
             
-            assert len(new_step) > 0 and new_step != "\n\n" and new_step != ""
+            if not new_step:
+                new_step = "\n\n"  # Fallback if empty
+                
             # stop reason logic
             stop_reason = None
             if new_step.endswith("\n\n"):
                 stop_reason = '\n\n'
-            elif len(new_step) > config.max_tokens:
+            elif len(new_ids[0]) >= config.max_tokens:
                 stop_reason = "length"
             else:
                 stop_reason = "EOS"
-            # elif tokenizer.eos_token_id == new_ids[0][-1] or new_step.endswith(tokenizer.eos_token):
-            #     stop_reason = "EOS"
-
 
             decoded_outputs.append(new_step)
             stop_reasons.append(stop_reason)

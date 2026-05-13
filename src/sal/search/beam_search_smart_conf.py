@@ -215,6 +215,8 @@ def _beam_search(batch_of_prompts, config: Config, slm: LLM, prm: PRM, llm: None
         if len(re_indices) == 0:
             continue
         
+        logger.info(f"Iteration {iterate_idx}: LLM intervening on {len(re_indices)} beams due to low confidence.")
+        
         smart_done = True
         re_beams = [prev_active_beams[idx] for idx in re_indices]          
         

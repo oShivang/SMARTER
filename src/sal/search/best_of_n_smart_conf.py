@@ -14,122 +14,160 @@
 # limitations under the License.
 
 import numpy as np
+from tqdm import tqdm
 from vllm import LLM, SamplingParams
+from transformers import AutoTokenizer, GenerationConfig
+from transformers.generation.stopping_criteria import StopStringCriteria
 
 from sal.config import Config
 from sal.models.reward_models import PRM
 from sal.utils.score import aggregate_scores, calculate_confidence_score, STRATEGY_MAP, needs_correction
-from transformers.generation.stopping_criteria import StopStringCriteria
-from transformers import AutoTokenizer
-
-STRATEGY_MAP = {
-    "likelihood": 0,
-    "likelihood_mean": 1,
-    "probs_mean": 2,
-    "entropy": 3,
-    "top_2_diff": 4,
-    "mean_least_3": 5,
-}
-
-def needs_correction(score, threshold, strategy):
-    if strategy == "entropy":
-        return score > threshold
-    elif strategy == "mean_least_3":
-        return score > threshold
-    elif strategy == "top_2_diff":
-        return score < threshold
-    else: # probs_mean, likelihood, etc.
-        return score < threshold
-
-def convert_to_chat_template(problem_str, partial_completion: None, config: Config, tokenizer: AutoTokenizer):
-    if partial_completion is None:
-        conv = [
-            {"role": "system", "content": config.system_prompt},
-            {"role": "user", "content": problem_str}
-        ]
-        return tokenizer.apply_chat_template(conv, tokenize=False, add_generation_prompt=True)
-    else:
-        conv = [
-            {"role": "system", "content": config.system_prompt},
-            {"role": "user", "content": problem_str},
-            {"role": "assistant", "content": partial_completion}
-        ]
-        return tokenizer.apply_chat_template(conv, tokenize=False, continue_final_message=True)
-        
+from sal.search.utils import build_conv
 
 def smart_best_of_n_conf(x, config: Config, slm: LLM, prm: PRM, llm: None):
-    tokenizer = slm.get_tokenizer()
-    tokenizer.padding_side = "left"
+    # Setup tokenizers
+    slm_tokenizer = slm.get_tokenizer()
     if config.custom_chat_template is not None:
-        tokenizer.chat_template = config.custom_chat_template
+        slm_tokenizer.chat_template = config.custom_chat_template
         
+    llm_tokenizer = AutoTokenizer.from_pretrained(config.model_path)
+    if config.custom_chat_template is not None:
+        llm_tokenizer.chat_template = config.custom_chat_template
+        
+    stopping_criteria = StopStringCriteria(stop_strings="\n\n", tokenizer=llm_tokenizer)
+    generation_config = GenerationConfig(
+        do_sample=True,
+        temperature=config.temperature,
+        top_p=config.top_p,
+        max_new_tokens=config.max_tokens,
+    )
+
     sampling_params = SamplingParams(
         temperature=config.temperature,
         max_tokens=config.max_tokens,
         top_p=config.top_p,
         n=1,
         logprobs=10,
+        stop=["\n\n"],
+        include_stop_str_in_output=True,
     )
-    
-    templated_convs = [convert_to_chat_template(problem, None, config, tokenizer) for problem in x["problem"]]
-    templated_convs = [c for conv in templated_convs for c in [conv] * config.n]
 
-    completions = [[] for _ in range(len(x["problem"]))]
-    completion_tokens = [[] for _ in range(len(x["problem"]))]
-    
-    responses = slm.generate(
-        templated_convs,
-        sampling_params=sampling_params,
-        use_tqdm=False,
-    )
-    
+    # Initialize trajectories
+    trajectories = []
+    for problem in x["problem"]:
+        for _ in range(config.n):
+            trajectories.append({
+                "prompt": problem,
+                "current_text": "",
+                "history": [],
+                "completed": False,
+                "all_scores": [],
+                "smart_step": [],
+                "gen_update": []
+            })
+            
     strategy_idx = STRATEGY_MAP.get(config.conf_strategy, 2)
     
-    for i in range(len(completions)):
-        batch_responses = responses[i * config.n : (i + 1) * config.n]
-        completions[i] = [r.outputs[0].text for r in batch_responses]
-        completion_tokens[i] = [len(r.outputs[0].token_ids) for r in batch_responses]
-
-    stopping_criteria = StopStringCriteria(stop_strings="\n\n", tokenizer=tokenizer)
-    
-    fixes_needed = []
-    for problem_idx, problem_completions in enumerate(completions):
-        for candidate_idx, text in enumerate(problem_completions):
-            # For best_of_n_smart_conf, we calculate the confidence score of the entire generation
-            # or we could split it into steps. Given the context, let's treat the whole generation.
-            logprobs = responses[problem_idx * config.n + candidate_idx].outputs[0].logprobs
-            score = calculate_confidence_score(logprobs)[strategy_idx]
-            if needs_correction(score, config.threshold, config.conf_strategy):
-                fixes_needed.append((problem_idx, candidate_idx))
-    
-    if fixes_needed:
-        print(f"Fixing {len(fixes_needed)} draft completions using {config.conf_strategy}")
-        llm_inputs = []
-        for problem_idx, candidate_idx in fixes_needed:
-            # For simplicity, we fix from the beginning if confidence is low
-            templated_conv = convert_to_chat_template(x["problem"][problem_idx], None, config, tokenizer)
-            llm_inputs.append(templated_conv)
+    # Step-by-step generation loop
+    for iterate_idx in tqdm(range(config.num_iterations), desc="Surgical Scaffolding Iterations"):
+        active_trajs = [t for t in trajectories if not t["completed"]]
+        if len(active_trajs) == 0:
+            break
             
-        input_ids = tokenizer(llm_inputs, return_tensors="pt", padding=True).to(llm.device)
-        new_ids = llm.generate(
-            input_ids["input_ids"],
-            attention_mask=input_ids["attention_mask"],
-            temperature=config.temperature,
-            top_p=config.top_p,
-            max_new_tokens=config.max_tokens,
-        )[:, input_ids["input_ids"].shape[1]:]
-        new_steps = tokenizer.batch_decode(new_ids, skip_special_tokens=True)
+        if iterate_idx == config.num_iterations - 1:
+            # Generate to EOS on the final step
+            sampling_params = SamplingParams(
+                temperature=config.temperature,
+                max_tokens=config.max_tokens,
+                top_p=config.top_p,
+                n=1,
+                logprobs=10,
+            )
+            
+        convs = [build_conv(t["prompt"], t["current_text"], config.system_prompt) for t in active_trajs]
+        add_gen_prompt = (iterate_idx == 0)
+        cont_final_msg = (iterate_idx > 0)
         
-        for i, (problem_idx, candidate_idx) in enumerate(fixes_needed):
-            completions[problem_idx][candidate_idx] = new_steps[i]
-
-    # Finally, score everything with PRM to select the best one
+        templated_convs = slm_tokenizer.apply_chat_template(
+            convs, tokenize=False, add_generation_prompt=add_gen_prompt, continue_final_message=cont_final_msg
+        )
+        
+        # 1. SLM Step Generation
+        responses = slm.generate(templated_convs, sampling_params, use_tqdm=False)
+        
+        fixes_needed = []
+        for i, (traj, response) in enumerate(zip(active_trajs, responses)):
+            output = response.outputs[0]
+            next_text = output.text
+            stop_reason = output.stop_reason
+            
+            # 2. Immediate Confidence Check
+            conf_metrics = calculate_confidence_score(output.logprobs)
+            score = conf_metrics[strategy_idx]
+            
+            if needs_correction(score, config.threshold, config.conf_strategy):
+                fixes_needed.append((i, traj, next_text, score, convs[i]))
+            else:
+                # Accept SLM step
+                traj["current_text"] += next_text
+                traj["history"].append(next_text)
+                traj["all_scores"].append(score)
+                
+                # Check completion
+                if stop_reason == "EOS" or stop_reason == "length" or next_text == "":
+                    traj["completed"] = True
+                elif len(slm_tokenizer.encode(" ".join(traj["history"]))) > 2048:
+                    traj["completed"] = True
+                    
+        # 3. Surgical Intervention (LLM generates one replacement step)
+        if fixes_needed:
+            for j, (i, traj, slm_text, slm_score, conv) in enumerate(fixes_needed):
+                templated = llm_tokenizer.apply_chat_template(
+                    conv, tokenize=False, add_generation_prompt=add_gen_prompt, continue_final_message=cont_final_msg
+                )
+                
+                input_ids = llm_tokenizer(templated, return_tensors="pt").to(llm.device)
+                new_ids = llm.generate(
+                    **input_ids,
+                    stopping_criteria=[stopping_criteria],
+                    generation_config=generation_config
+                )[:, input_ids["input_ids"].shape[1]:]
+                
+                llm_step = llm_tokenizer.decode(new_ids[0])
+                
+                # Ensure the LLM didn't just return an empty string
+                if not llm_step:
+                    llm_step = "\n\n"
+                
+                # 4. Append LLM step to history and return control to SLM
+                traj["current_text"] += llm_step
+                traj["history"].append(llm_step)
+                traj["all_scores"].append(slm_score) # Keep the original low score for analysis
+                
+                traj["smart_step"].append(iterate_idx)
+                traj["gen_update"].append((slm_text, llm_step))
+                
+                if llm_step.endswith("\n\n"):
+                    pass # continues loop seamlessly
+                elif len(new_ids[0]) >= config.max_tokens:
+                    traj["completed"] = True
+                else:
+                    traj["completed"] = True
+                    
+    # Format output
+    completions = [[] for _ in range(len(x["problem"]))]
+    for i, problem in enumerate(x["problem"]):
+        # Find all trajectories for this problem
+        problem_trajs = [t for t in trajectories if t["prompt"] == problem]
+        completions[i] = [t["current_text"] for t in problem_trajs]
+        
+    # 5. Final PRM Evaluation
     prm_scores = prm.score(x["problem"], completions, config.prm_batch_size)
     agg_scores = [
         [aggregate_scores(s, config.agg_strategy) for s in score] for score in prm_scores
     ]
 
-    pred = [completion[np.argmax(s)] for completion, s in zip(completions, agg_scores)]
+    pred = [comp[np.argmax(s)] for comp, s in zip(completions, agg_scores)]
 
     x["completions"] = completions
     x["pred"] = pred
