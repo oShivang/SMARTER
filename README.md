@@ -70,6 +70,30 @@ From our latest benchmark run:
 
 
 
+
+---
+
+## 🚀 Getting Started
+
+### **1. Setup Environment**
+```bash
+pip install -r requirements.txt
+```
+
+### **2. Run Calibration Sweep**
+Automatically find the best threshold for your dataset:
+```bash
+python scripts/calibrate.py --datasets "gsm8k,math500,boolq" --num_calibration_samples 100
+```
+
+### **3. Run Final Benchmark**
+Execute the full SMARTER pipeline using the optimal thresholds:
+```bash
+bash scripts/run_final_benchmark.sh
+```
+
+---
+
 ## 📚 Citation
 If you use this project in your research, please cite the original SMART paper and this implementation:
 ```bibtex
