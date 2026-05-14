@@ -296,19 +296,40 @@ def calibrate():
         print("-"*40 + "\n", flush=True)
 
         # --- FULL RUN (Phase 4) ---
-        print(f"Launching Full Run for {ds_name} using optimal threshold...", flush=True)
-        import subprocess
-        cmd = [
-            "python", "scripts/test_time_compute.py",
-            "recipes/qwen_test.yaml",
-            f"--dataset_name={ds_name}",
-            "--smart_search=True",
-            "--score_method=conf",
-            f"--conf_strategy={best_ds_config['method']}",
-            f"--threshold={best_ds_config['threshold']}",
-            f"--num_samples={args.num_full_samples}"
-        ]
-        subprocess.run(cmd)
+        if args.num_full_samples is not None and args.num_full_samples > 0:
+            print(f"Launching Full Run for {ds_name} using optimal threshold...", flush=True)
+            import subprocess
+            cmd = [
+                "python", "scripts/test_time_compute.py",
+                "recipes/qwen_test.yaml",
+                f"--dataset_name={ds_name}",
+                "--smart_search=True",
+                "--score_method=conf",
+                f"--conf_strategy={best_ds_config['method']}",
+                f"--threshold={best_ds_config['threshold']}",
+                f"--num_samples={args.num_full_samples}"
+            ]
+            if args.load_in_4bit:
+                cmd.append("--load_in_4bit=True")
+            subprocess.run(cmd)
+        elif args.num_full_samples == -1:
+            print(f"Launching Full Run for {ds_name} using optimal threshold...", flush=True)
+            import subprocess
+            cmd = [
+                "python", "scripts/test_time_compute.py",
+                "recipes/qwen_test.yaml",
+                f"--dataset_name={ds_name}",
+                "--smart_search=True",
+                "--score_method=conf",
+                f"--conf_strategy={best_ds_config['method']}",
+                f"--threshold={best_ds_config['threshold']}",
+                "--num_samples=-1"
+            ]
+            if args.load_in_4bit:
+                cmd.append("--load_in_4bit=True")
+            subprocess.run(cmd)
+        else:
+            print(f"Skipping Full Run for {ds_name} as num_full_samples is {args.num_full_samples}", flush=True)
 
     print("\n" + "="*50, flush=True)
     print("ALL CALIBRATIONS COMPLETE", flush=True)
