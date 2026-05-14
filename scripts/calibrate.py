@@ -141,7 +141,10 @@ def calibrate():
                 
                 gt = dataset[prob_idx].get("answer", dataset[prob_idx].get("solution", ""))
                 if ds_name == "boolq":
-                    llm_fixable.append(str(dataset[prob_idx]["answer"]).lower().strip() in llm_text.lower())
+                    # The raw BoolQ dataset 'answer' column is a boolean (True/False).
+                    # We map True -> "yes" and False -> "no" for text matching.
+                    gt_str = "yes" if dataset[prob_idx]["answer"] else "no"
+                    llm_fixable.append(gt_str in llm_text.lower())
                 else:
                     temp_samples = [{"problem": problem, "pred": llm_text, "solution": gt, "answer": gt, "completions": [llm_text]}]
                     _, llm_eval = evaluate(data_name="math", prompt_type="cot", samples=temp_samples, pred_keys=["pred"])
@@ -202,7 +205,8 @@ def calibrate():
                 llm_text = llm_tokenizer.decode(out_ids[0][input_ids.input_ids.shape[1]:], skip_special_tokens=True)
                 gt = dataset[prob_idx].get("answer", dataset[prob_idx].get("solution", ""))
                 if ds_name == "boolq":
-                    llm_fixable.append(str(dataset[prob_idx]["answer"]).lower().strip() in llm_text.lower())
+                    gt_str = "yes" if dataset[prob_idx]["answer"] else "no"
+                    llm_fixable.append(gt_str in llm_text.lower())
                 else:
                     temp_samples = [{"problem": problem, "pred": llm_text, "solution": gt, "answer": gt, "completions": [llm_text]}]
                     _, llm_eval = evaluate(data_name="math", prompt_type="cot", samples=temp_samples, pred_keys=["pred"])
@@ -211,7 +215,7 @@ def calibrate():
 
         # --- Accuracy Evaluation & Sweeping (Common) ---
         if ds_name == "boolq":
-            slm_correct_list = [str(dataset[idx]["answer"]).lower().strip() in res["slm_final_text"].lower() for idx, res in enumerate(problem_results)]
+            slm_correct_list = [("yes" if dataset[idx]["answer"] else "no") in res["slm_final_text"].lower() for idx, res in enumerate(problem_results)]
         else:
             eval_name = "math" if "math" in ds_name or ds_name == "gsm8k" else ds_name
             temp_samples = [{"problem": p, "pred": r["slm_final_text"], "solution": dataset[idx]["answer"], "answer": dataset[idx]["answer"], "completions": [r["slm_final_text"]]} for idx, (p, r) in enumerate(zip(problems, problem_results))]
