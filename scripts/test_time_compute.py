@@ -84,6 +84,13 @@ def main():
     print(f"Dataset:              {config.dataset_name}")
     print(f"Split:                {config.dataset_split}")
     
+    # Use CLI arg to override config if provided
+    if args.num_samples is not None:
+        config.num_samples = args.num_samples
+    
+    if config.num_samples == -1:
+        config.num_samples = None
+
     if config.smart_search:
         print(f"Intervention Threshold: {config.threshold}")
         print(f"Max Iterations:       {config.num_iterations}")
