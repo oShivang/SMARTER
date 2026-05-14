@@ -51,7 +51,7 @@ The following graphs illustrate the trade-off between **Accuracy** and **LLM Usa
 
 | GSM8K | MATH-500 | BoolQ |
 | :---: | :---: | :---: |
-| ![GSM8K Elbow](file:///Users/shivangkarthikey/Desktop/BTP_sem4/SMARTER/elbow_gsm8k.png) | ![MATH-500 Elbow](file:///Users/shivangkarthikey/Desktop/BTP_sem4/SMARTER/elbow_math500.png) | ![BoolQ Elbow](file:///Users/shivangkarthikey/Desktop/BTP_sem4/SMARTER/elbow_boolq.png) |
+| ![GSM8K Elbow](output/elbow_gsm8k.png) | ![MATH-500 Elbow](output/elbow_math500.png) | ![BoolQ Elbow](output/elbow_boolq.png) |
 
 ---
 
@@ -59,7 +59,7 @@ The following graphs illustrate the trade-off between **Accuracy** and **LLM Usa
 
 All execution parameters and model paths are managed via `recipes/`. Key performance data is stored in:
 
-- **`calibration_summary.json`**: This file tracks the performance of every scoring method across different thresholds. It is used to automatically select the "Best Config" for each dataset.
+- **[`calibration_summary.json`](output/calibration_summary.json)**: This file tracks the performance of every scoring method across different thresholds. It is used to automatically select the "Best Config" for each dataset.
 - **`recipes/qwen_test.yaml`**: Main configuration for inference runs, including `n` (draft count) and `num_iterations`.
 
 ### **Optimal Calibration Results**
@@ -68,28 +68,7 @@ From our latest benchmark run:
 - **MATH-500**: `probs_mean` strategy (Threshold: 0.86)
 - **BoolQ**: `entropy` strategy (Threshold: 0.43)
 
----
 
-## 🚀 Getting Started
-
-### **1. Setup Environment**
-```bash
-pip install -r requirements.txt
-```
-
-### **2. Run Calibration Sweep**
-Automatically find the best threshold for your dataset:
-```bash
-python scripts/calibrate.py --datasets "gsm8k,math500,boolq" --num_calibration_samples 100
-```
-
-### **3. Run Final Benchmark**
-Execute the full SMARTER pipeline using the optimal thresholds:
-```bash
-bash scripts/run_final_benchmark.sh
-```
-
----
 
 ## 📚 Citation
 If you use this project in your research, please cite the original SMART paper and this implementation:
