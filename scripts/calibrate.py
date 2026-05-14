@@ -125,7 +125,7 @@ def calibrate():
                     output = outputs[0].outputs[0]
                     conf_metrics = calculate_confidence_score(output.logprobs)
                     scores_dict = {name: conf_metrics[idx] for name, idx in STRATEGY_MAP.items()}
-                    steps_info.append({"scores": scores_dict, "text": output.text})
+                    steps_info.append({"scores": scores_dict, "text": output.text, "token_count": len(output.token_ids)})
                     current_text += output.text
                     if output.stop_reason == "EOS" or output.text == "": break
                 problem_results.append({"slm_final_text": current_text, "steps": steps_info})
@@ -178,7 +178,7 @@ def calibrate():
                     output = outputs[0].outputs[0]
                     conf_metrics = calculate_confidence_score(output.logprobs)
                     scores_dict = {name: conf_metrics[idx] for name, idx in STRATEGY_MAP.items()}
-                    steps_info.append({"scores": scores_dict, "text": output.text})
+                    steps_info.append({"scores": scores_dict, "text": output.text, "token_count": len(output.token_ids)})
                     current_text += output.text
                     if output.stop_reason == "EOS" or output.text == "": break
                 problem_results.append({"slm_final_text": current_text, "steps": steps_info})
@@ -237,18 +237,35 @@ def calibrate():
             thresholds = np.linspace(min(bottleneck_scores), max(bottleneck_scores), 20)
             accs, costs = [], []
             for tau in thresholds:
-                correct = 0; triggered_count = 0
+                correct = 0
+                problem_token_ratios = []
                 for i in range(len(problems)):
                     # Check if the bottleneck triggers an intervention
                     triggered = needs_correction(bottleneck_scores[i], tau, method)
+                    
                     if triggered:
-                        triggered_count += 1
+                        # Find which step triggered it to get the token count
+                        trigger_step_idx = -1
+                        for s_idx, step in enumerate(problem_results[i]["steps"]):
+                            if needs_correction(step["scores"][method], tau, method):
+                                trigger_step_idx = s_idx
+                                break
+                        
+                        # Usage Ratio = (Trigger Step Tokens) / (Total Tokens)
+                        # We assume LLM writes about one step. 
+                        # To be conservative, we use the token count of that specific step.
+                        step_tokens = problem_results[i]["steps"][trigger_step_idx]["token_count"]
+                        total_tokens = sum(s["token_count"] for s in problem_results[i]["steps"])
+                        usage_ratio = (step_tokens / total_tokens) if total_tokens > 0 else 1.0
+                        problem_token_ratios.append(usage_ratio)
+                        
                         if llm_fixable[i]: correct += 1
                     else:
+                        problem_token_ratios.append(0.0)
                         if slm_correct_list[i]: correct += 1
                 
                 accuracy = (correct / len(problems)) * 100
-                cost = (triggered_count / len(problems)) * 100
+                cost = np.mean(problem_token_ratios) * 100
                 accs.append(accuracy); costs.append(cost)
             
             # Find the best threshold for this method
