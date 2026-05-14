@@ -41,7 +41,7 @@ def calculate_confidence_score(answer_tokens_logprobs_list):
         tuple: (likelihood_score, likelihood_mean_score, probs_mean_score, entropy, top_2_diff, mean_least_3)
     """
     if not answer_tokens_logprobs_list:
-        return [0.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+        return [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0]
 
     log_likelihood_of_completion = sum(next(iter(logprob.values())).logprob for logprob in answer_tokens_logprobs_list)
     

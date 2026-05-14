@@ -91,7 +91,7 @@ def calibrate():
                 enforce_eager=True,
                 enable_prefix_caching=True, 
                 tensor_parallel_size=num_gpus if num_gpus > 0 else 1, 
-                max_model_len=2048, 
+                max_model_len=4096, 
                 dtype=dtype
             )
             
@@ -160,7 +160,7 @@ def calibrate():
                 enforce_eager=True,
                 enable_prefix_caching=True, 
                 tensor_parallel_size=num_gpus if num_gpus > 0 else 1, 
-                max_model_len=2048, 
+                max_model_len=4096, 
                 dtype=dtype
             )
             print("SLM Loaded successfully.", flush=True)
