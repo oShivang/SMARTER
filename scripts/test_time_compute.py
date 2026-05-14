@@ -226,7 +226,7 @@ def main():
         correct_counts = {k: 0 for k in keys}
         samples_list = list(dataset)
         for sample in samples_list:
-            gt = "yes" if sample["answer"] else "no"
+            gt = str(sample["answer"]).lower().strip()
             for k in keys:
                 pred = extract_bool(sample.get(k, ""))
                 if pred == gt:
