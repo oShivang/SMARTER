@@ -87,7 +87,7 @@ def calibrate():
             print("Loading SLM and LLM in Parallel...", flush=True)
             slm = LLM(
                 model=draft_model_path, 
-                gpu_memory_utilization=0.35, 
+                gpu_memory_utilization=0.8, 
                 enforce_eager=True,
                 enable_prefix_caching=True, 
                 tensor_parallel_size=num_gpus if num_gpus > 0 else 1, 
@@ -156,7 +156,7 @@ def calibrate():
             print("PHASE 1: Loading SLM (vLLM)...", flush=True)
             slm = LLM(
                 model=draft_model_path, 
-                gpu_memory_utilization=0.35, 
+                gpu_memory_utilization=0.8, 
                 enforce_eager=True,
                 enable_prefix_caching=True, 
                 tensor_parallel_size=num_gpus if num_gpus > 0 else 1, 
