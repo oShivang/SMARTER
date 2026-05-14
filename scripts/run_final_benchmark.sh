@@ -38,6 +38,13 @@ for DS in "gsm8k" "math500" "boolq"; do
     
     echo "Using Optimal Strategy: $METHOD at Threshold: $THRESHOLD"
     
+    # Use half dataset for BoolQ (approx 1635 samples), full for others
+    SAMPLES="-1"
+    if [ "$DS" == "boolq" ]; then
+        SAMPLES="1635"
+        echo "Note: Running half of BoolQ ($SAMPLES samples)"
+    fi
+
     python scripts/test_time_compute.py \
         recipes/qwen_test.yaml \
         --dataset_name="$DS" \
@@ -45,7 +52,7 @@ for DS in "gsm8k" "math500" "boolq"; do
         --score_method="conf" \
         --conf_strategy="$METHOD" \
         --threshold="$THRESHOLD" \
-        --num_samples=-1 # -1 runs the entire dataset
+        --num_samples="$SAMPLES"
 done
 
 echo "=================================================="
