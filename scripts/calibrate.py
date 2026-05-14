@@ -85,7 +85,15 @@ def calibrate():
             from transformers import AutoModelForCausalLM, AutoTokenizer
             
             print("Loading SLM and LLM in Parallel...", flush=True)
-            slm = LLM(model=draft_model_path, gpu_memory_utilization=gpu_util, enable_prefix_caching=True, tensor_parallel_size=num_gpus if num_gpus > 0 else 1, max_model_len=2048, dtype=dtype)
+            slm = LLM(
+                model=draft_model_path, 
+                gpu_memory_utilization=0.35, 
+                enforce_eager=True,
+                enable_prefix_caching=True, 
+                tensor_parallel_size=num_gpus if num_gpus > 0 else 1, 
+                max_model_len=2048, 
+                dtype=dtype
+            )
             
             # Clear cache to make room for LLM
             torch.cuda.empty_cache()
@@ -146,7 +154,16 @@ def calibrate():
             # (Same as the previous sequential implementation)
             from vllm import LLM, SamplingParams
             print("PHASE 1: Loading SLM (vLLM)...", flush=True)
-            slm = LLM(model=draft_model_path, gpu_memory_utilization=gpu_util, enable_prefix_caching=True, tensor_parallel_size=num_gpus if num_gpus > 0 else 1, max_model_len=2048, dtype=dtype)
+            slm = LLM(
+                model=draft_model_path, 
+                gpu_memory_utilization=0.35, 
+                enforce_eager=True,
+                enable_prefix_caching=True, 
+                tensor_parallel_size=num_gpus if num_gpus > 0 else 1, 
+                max_model_len=2048, 
+                dtype=dtype
+            )
+            print("SLM Loaded successfully.", flush=True)
             sampling_params = SamplingParams(temperature=config.temperature, max_tokens=config.max_tokens, top_p=config.top_p, stop=["\n\n"], n=1, logprobs=10)
 
             print(f"Starting SLM generation for {len(problems)} problems...", flush=True)
