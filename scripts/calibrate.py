@@ -251,8 +251,16 @@ def calibrate():
                 cost = (triggered_count / len(problems)) * 100
                 accs.append(accuracy); costs.append(cost)
             
-            best_idx = np.argmax(accs)
-            if accs[best_idx] > best_ds_config["acc"]:
+            # Find the best threshold for this method
+            # We want highest accuracy. If tied, we want lowest cost.
+            best_idx = 0
+            for idx in range(len(accs)):
+                if accs[idx] > accs[best_idx]:
+                    best_idx = idx
+                elif accs[idx] == accs[best_idx] and costs[idx] < costs[best_idx]:
+                    best_idx = idx
+            
+            if accs[best_idx] > best_ds_config["acc"] or (accs[best_idx] == best_ds_config["acc"] and costs[best_idx] < best_ds_config["cost"]):
                 best_ds_config = {"method": method, "threshold": thresholds[best_idx], "acc": accs[best_idx], "cost": costs[best_idx]}
             method_stats[method] = {"thresholds": thresholds.tolist(), "accuracies": accs, "costs": costs}
             plt.plot(costs, accs, marker='o', label=method)
