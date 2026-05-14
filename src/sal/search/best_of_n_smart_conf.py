@@ -139,6 +139,9 @@ def smart_best_of_n_conf(x, config: Config, slm: LLM, prm: PRM, llm: None):
             
             # Batch Tokenize
             llm_tokenizer.padding_side = "left"
+            if llm_tokenizer.pad_token is None:
+                llm_tokenizer.pad_token = llm_tokenizer.eos_token
+            
             inputs = llm_tokenizer(batch_prompts, return_tensors="pt", padding=True).to(llm.device)
             
             # Batch Generate

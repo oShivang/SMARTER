@@ -84,10 +84,20 @@ def calibrate():
             from vllm import LLM, SamplingParams
             from transformers import AutoModelForCausalLM, AutoTokenizer
             
-            logger.info("Loading SLM and LLM in Parallel...")
+            print("Loading SLM and LLM in Parallel...", flush=True)
             slm = LLM(model=draft_model_path, gpu_memory_utilization=gpu_util, enable_prefix_caching=True, tensor_parallel_size=num_gpus if num_gpus > 0 else 1, max_model_len=2048, dtype=dtype)
+            
+            # Clear cache to make room for LLM
+            torch.cuda.empty_cache()
+            
+            print("Loading LLM into GPU...", flush=True)
             llm_device_map = "cuda:0" if num_gpus == 1 else "auto"
-            llm = AutoModelForCausalLM.from_pretrained(model_path, device_map=llm_device_map, torch_dtype=torch_dtype).eval()
+            llm = AutoModelForCausalLM.from_pretrained(
+                model_path, 
+                device_map=llm_device_map, 
+                torch_dtype=torch_dtype,
+                low_cpu_mem_usage=True
+            ).eval()
             llm_tokenizer = AutoTokenizer.from_pretrained(model_path)
             
             sampling_params = SamplingParams(temperature=config.temperature, max_tokens=config.max_tokens, top_p=config.top_p, stop=["\n\n"], n=1, logprobs=10)
@@ -95,7 +105,7 @@ def calibrate():
             for prob_idx, problem in enumerate(problems):
                 # Print progress to prevent the appearance of being "stuck"
                 if prob_idx % 5 == 0:
-                    logger.info(f"Processing Calibration Sample {prob_idx + 1}/{len(problems)}...")
+                    print(f"Processing Calibration Sample {prob_idx + 1}/{len(problems)}...", flush=True)
                 
                 # SLM part
                 current_text = ""
@@ -135,12 +145,13 @@ def calibrate():
             # --- SEQUENTIAL MODE (Safe for T4) ---
             # (Same as the previous sequential implementation)
             from vllm import LLM, SamplingParams
-            logger.info("PHASE 1: Loading SLM (vLLM)...")
+            print("PHASE 1: Loading SLM (vLLM)...", flush=True)
             slm = LLM(model=draft_model_path, gpu_memory_utilization=gpu_util, enable_prefix_caching=True, tensor_parallel_size=num_gpus if num_gpus > 0 else 1, max_model_len=2048, dtype=dtype)
             sampling_params = SamplingParams(temperature=config.temperature, max_tokens=config.max_tokens, top_p=config.top_p, stop=["\n\n"], n=1, logprobs=10)
 
+            print(f"Starting SLM generation for {len(problems)} problems...", flush=True)
             for prob_idx, problem in enumerate(problems):
-                if prob_idx % 2 == 0: logger.info(f"SLM Problem {prob_idx+1}/{len(problems)}...")
+                if prob_idx % 5 == 0: print(f"SLM Problem {prob_idx+1}/{len(problems)}...", flush=True)
                 current_text = ""
                 steps_info = []
                 for i in range(config.num_iterations):
@@ -157,12 +168,14 @@ def calibrate():
             del slm; clear_gpu_memory()
 
             from transformers import AutoModelForCausalLM, AutoTokenizer
-            logger.info("PHASE 2: Loading LLM (Transformers)...")
+            print("PHASE 2: Loading LLM (Transformers)...", flush=True)
             llm_device_map = "cuda:0" if num_gpus == 1 else "auto"
-            llm = AutoModelForCausalLM.from_pretrained(model_path, device_map=llm_device_map, torch_dtype=torch_dtype).eval()
+            llm = AutoModelForCausalLM.from_pretrained(model_path, device_map=llm_device_map, torch_dtype=torch_dtype, low_cpu_mem_usage=True).eval()
             llm_tokenizer = AutoTokenizer.from_pretrained(model_path)
+            
+            print(f"Starting LLM evaluation for {len(problems)} problems...", flush=True)
             for prob_idx, problem in enumerate(problems):
-                if prob_idx % 2 == 0: logger.info(f"LLM Problem {prob_idx+1}/{len(problems)}...")
+                if prob_idx % 5 == 0: print(f"LLM Problem {prob_idx+1}/{len(problems)}...", flush=True)
                 conv = build_conv(problem, "", config.system_prompt)
                 templated = llm_tokenizer.apply_chat_template(conv, tokenize=False, add_generation_prompt=True)
                 input_ids = llm_tokenizer(templated, return_tensors="pt").to(llm.device)
@@ -190,21 +203,37 @@ def calibrate():
         best_ds_config = {"method": None, "threshold": 0, "acc": 0, "cost": 0}
         plt.figure(figsize=(10, 6))
         method_stats = {}
-        for method in ["probs_mean", "entropy", "top_2_diff", "mean_least_3"]:
-            all_scores = [step["scores"][method] for res in problem_results for step in res["steps"]]
-            if not all_scores: continue
-            thresholds = np.linspace(min(all_scores), max(all_scores), 20)
+        for method in ["probs_mean", "probs_min", "entropy", "top_2_diff", "mean_least_3"]:
+            # Find the bottleneck score for each problem
+            bottleneck_scores = []
+            for res in problem_results:
+                scores = [step["scores"][method] for step in res["steps"]]
+                if not scores: continue
+                # Worst score: min for probs, max for entropy
+                if method == "entropy" or method == "mean_least_3":
+                    bottleneck_scores.append(max(scores))
+                else:
+                    bottleneck_scores.append(min(scores))
+            
+            if not bottleneck_scores: continue
+            
+            thresholds = np.linspace(min(bottleneck_scores), max(bottleneck_scores), 20)
             accs, costs = [], []
             for tau in thresholds:
                 correct = 0; triggered_count = 0
                 for i in range(len(problems)):
-                    triggered = any(needs_correction(step["scores"][method], tau, method) for step in problem_results[i]["steps"])
+                    # Check if the bottleneck triggers an intervention
+                    triggered = needs_correction(bottleneck_scores[i], tau, method)
                     if triggered:
                         triggered_count += 1
                         if llm_fixable[i]: correct += 1
                     else:
                         if slm_correct_list[i]: correct += 1
-                accs.append((correct / len(problems)) * 100); costs.append((triggered_count / len(problems)) * 100)
+                
+                accuracy = (correct / len(problems)) * 100
+                cost = (triggered_count / len(problems)) * 100
+                accs.append(accuracy); costs.append(cost)
+            
             best_idx = np.argmax(accs)
             if accs[best_idx] > best_ds_config["acc"]:
                 best_ds_config = {"method": method, "threshold": thresholds[best_idx], "acc": accs[best_idx], "cost": costs[best_idx]}
@@ -214,17 +243,31 @@ def calibrate():
         plt.xlabel("Cost (% LLM Calls)"); plt.ylabel("Accuracy (%)"); plt.title(f"Elbow Graph - {ds_name}"); plt.legend(); plt.grid(True)
         plt.savefig(f"outputs/calibration/elbow_{ds_name}.png"); plt.close()
         all_dataset_results[ds_name] = {"best_config": best_ds_config, "all_methods": method_stats}
-        logger.info(f"Best for {ds_name}: {best_ds_config['method']} @ {best_ds_config['threshold']:.4f}")
+        
+        print("\n" + "-"*40, flush=True)
+        print(f"WINNER FOR DATASET: {ds_name}", flush=True)
+        print(f"method={best_ds_config['method']}", flush=True)
+        print(f"threshold={best_ds_config['threshold']:.6f}", flush=True)
+        print(f"accuracy={best_ds_config['acc']:.2f}%", flush=True)
+        print(f"cost={best_ds_config['cost']:.2f}% LLM usage", flush=True)
+        print("-"*40 + "\n", flush=True)
 
         # --- FULL RUN (Phase 4) ---
+        print(f"Launching Full Run for {ds_name} using optimal threshold...", flush=True)
         import subprocess
         cmd = ["python", "scripts/test_time_compute.py", args.config, f"--dataset_name={ds_name}", "--smart_search=True", "--score_method=conf", f"--conf_strategy={best_ds_config['method']}", f"--threshold={best_ds_config['threshold']:.4f}"]
         if args.num_full_samples: cmd.append(f"--num_samples={args.num_full_samples}")
         subprocess.run(cmd)
 
+    print("\n" + "="*50, flush=True)
+    print("ALL CALIBRATIONS COMPLETE", flush=True)
+    for ds, res in all_dataset_results.items():
+        bc = res["best_config"]
+        print(f"Dataset: {ds:10} | Best Method: {bc['method']:12} | Threshold: {bc['threshold']:.6f}", flush=True)
+    print("="*50 + "\n", flush=True)
+
     with open("outputs/calibration/calibration_summary.json", "w") as f:
         json.dump(all_dataset_results, f, indent=4)
-    logger.info("Calibration complete. Summary saved.")
 
 if __name__ == "__main__":
     calibrate()

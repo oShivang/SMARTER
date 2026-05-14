@@ -51,6 +51,7 @@ def calculate_confidence_score(answer_tokens_logprobs_list):
     likelihood_mean_score = np.exp(log_likelihood_of_completion / T)
     
     probs_mean_score = np.mean([np.exp(next(iter(logprob.values())).logprob) for logprob in answer_tokens_logprobs_list])
+    probs_min_score = np.min([np.exp(next(iter(logprob.values())).logprob) for logprob in answer_tokens_logprobs_list])
     
     # New metrics
     entropies = []
@@ -88,7 +89,7 @@ def calculate_confidence_score(answer_tokens_logprobs_list):
     top_2_diff_score = np.mean(top_2_diffs)
     mean_least_3_score = np.mean(mean_least_3s)
     
-    return [likelihood_score, likelihood_mean_score, probs_mean_score, entropy_score, top_2_diff_score, mean_least_3_score]
+    return [likelihood_score, likelihood_mean_score, probs_mean_score, entropy_score, top_2_diff_score, mean_least_3_score, probs_min_score]
 
 
 STRATEGY_MAP = {
@@ -98,6 +99,7 @@ STRATEGY_MAP = {
     "entropy": 3,
     "top_2_diff": 4,
     "mean_least_3": 5,
+    "probs_min": 6,
 }
 
 def needs_correction(score, threshold, strategy):
