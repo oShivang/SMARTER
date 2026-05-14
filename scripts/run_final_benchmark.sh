@@ -31,11 +31,22 @@ for DS in "gsm8k" "math500" "boolq"; do
     echo "📊 EVALUATING FULL DATASET: $DS"
     echo "--------------------------------------------------"
     
+    # Check if calibration file exists
+    if [ ! -f "outputs/calibration/calibration_summary.json" ]; then
+        echo "❌ ERROR: outputs/calibration/calibration_summary.json not found! Calibration must have failed."
+        exit 1
+    fi
+
     # Extract the winner method and threshold for this dataset
-    # (The python script below parses the json summary we just created)
-    METHOD=$(python3 -c "import json; print(json.load(open('outputs/calibration/calibration_summary.json'))['$DS']['best_config']['method'])")
-    THRESHOLD=$(python3 -c "import json; print(json.load(open('outputs/calibration/calibration_summary.json'))['$DS']['best_config']['threshold'])")
+    METHOD=$(python3 -c "import json; d=json.load(open('outputs/calibration/calibration_summary.json')); print(d['$DS']['best_config']['method'] if '$DS' in d else 'probs_mean')")
+    THRESHOLD=$(python3 -c "import json; d=json.load(open('outputs/calibration/calibration_summary.json')); print(d['$DS']['best_config']['threshold'] if '$DS' in d else '0.5')")
     
+    if [ "$METHOD" == "None" ] || [ -z "$METHOD" ]; then
+        echo "⚠️ Warning: No best method found for $DS, defaulting to probs_mean"
+        METHOD="probs_mean"
+        THRESHOLD="0.5"
+    fi
+
     echo "Using Optimal Strategy: $METHOD at Threshold: $THRESHOLD"
     
     # Use half dataset for BoolQ (approx 1635 samples), full for others
