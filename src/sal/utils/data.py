@@ -40,8 +40,12 @@ def get_dataset(config: Config) -> Dataset:
     elif config.dataset_name in ["math500", "HuggingFaceH4/MATH-500"]:
         dataset = load_dataset("HuggingFaceH4/MATH-500", split=config.dataset_split)
     elif config.dataset_name == "boolq":
-        dataset = load_dataset("google/boolq", split=config.dataset_split)
-        dataset = dataset.map(lambda x: {"problem": f"Passage: {x['passage']}\nQuestion: {x['question']}"})
+        split = "validation" if config.dataset_split == "test" else config.dataset_split
+        dataset = load_dataset("google/boolq", split=split)
+        dataset = dataset.map(lambda x: {
+            "problem": f"Passage: {x['passage']}\nQuestion: {x['question']}",
+            "answer": "yes" if x["answer"] else "no"
+        })
     else:
         # Fallback with trust_remote_code as a last resort
         try:

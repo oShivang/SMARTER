@@ -57,8 +57,11 @@ def main():
     config = parser.parse()
 
     num_gpus = torch.cuda.device_count()
+    print(f"The number of available GPUs: {num_gpus}")
     print("="*20)
-    print("The number of available GPUs:", num_gpus)
+
+    if config.num_samples == -1:
+        config.num_samples = None
     
     # configure approach name
     approach_suffix = "_smart" if config.smart_search else ""
@@ -83,11 +86,7 @@ def main():
     print("-" * 50)
     print(f"Dataset:              {config.dataset_name}")
     print(f"Split:                {config.dataset_split}")
-    
-    # Use CLI arg to override config if provided
-    if args.num_samples is not None:
-        config.num_samples = args.num_samples
-    
+
     if config.num_samples == -1:
         config.num_samples = None
 
