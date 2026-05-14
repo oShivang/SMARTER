@@ -14,13 +14,14 @@
 # limitations under the License.
 
 import numpy as np
+import logging
 from tqdm import tqdm
 from vllm import LLM, SamplingParams
 from transformers import AutoTokenizer, GenerationConfig
 from transformers.generation.stopping_criteria import StopStringCriteria
+import torch
 
 from sal.config import Config
-from sal.models.reward_models import PRM
 from sal.utils.score import aggregate_scores, calculate_confidence_score, STRATEGY_MAP, needs_correction
 from sal.search.utils import build_conv
 
@@ -31,7 +32,9 @@ def get_cached_tokenizer(model_path):
         _TOKENIZER_CACHE[model_path] = AutoTokenizer.from_pretrained(model_path)
     return _TOKENIZER_CACHE[model_path]
 
-def smart_best_of_n_conf(x, config: Config, slm: LLM, prm: PRM, llm: None):
+def smart_best_of_n_conf(x, config: Config, slm: LLM, llm: None, prm=None, **kwargs):
+    logger = logging.getLogger(__name__)
+    
     # Setup tokenizers
     slm_tokenizer = slm.get_tokenizer()
     if config.custom_chat_template is not None:
@@ -49,14 +52,13 @@ def smart_best_of_n_conf(x, config: Config, slm: LLM, prm: PRM, llm: None):
         max_new_tokens=config.max_tokens,
     )
 
-    sampling_params = SamplingParams(
+    # Initial full generation params (no \n\n stop string)
+    sampling_params_full = SamplingParams(
         temperature=config.temperature,
         max_tokens=config.max_tokens,
         top_p=config.top_p,
         n=1,
         logprobs=10,
-        stop=["\n\n"],
-        include_stop_str_in_output=True,
     )
 
     # Initialize trajectories
@@ -75,22 +77,13 @@ def smart_best_of_n_conf(x, config: Config, slm: LLM, prm: PRM, llm: None):
             
     strategy_idx = STRATEGY_MAP.get(config.conf_strategy, 2)
     
-    # Step-by-step generation loop
-    # Removed tqdm from inner loop to prevent Colab output freezing
+    # Post-Hoc Loop
     for iterate_idx in range(config.num_iterations):
         active_trajs = [t for t in trajectories if not t["completed"]]
         if len(active_trajs) == 0:
             break
             
-        if iterate_idx == config.num_iterations - 1:
-            # Generate to EOS on the final step
-            sampling_params = SamplingParams(
-                temperature=config.temperature,
-                max_tokens=config.max_tokens,
-                top_p=config.top_p,
-                n=1,
-                logprobs=10,
-            )
+        logger.info(f"Iteration {iterate_idx}: Starting SLM generation for {len(active_trajs)} active trajectories...")
             
         convs = [build_conv(t["prompt"], t["current_text"], config.system_prompt) for t in active_trajs]
         add_gen_prompt = (iterate_idx == 0)
@@ -100,51 +93,86 @@ def smart_best_of_n_conf(x, config: Config, slm: LLM, prm: PRM, llm: None):
             convs, tokenize=False, add_generation_prompt=add_gen_prompt, continue_final_message=cont_final_msg
         )
         
-        # 1. SLM Step Generation
-        responses = slm.generate(templated_convs, sampling_params, use_tqdm=False)
+        # 1. SLM Full Generation of the remainder
+        responses = slm.generate(templated_convs, sampling_params_full, use_tqdm=False)
+        logger.info("SLM generation complete. Chunking and evaluating steps...")
         
         fixes_needed = []
         for i, (traj, response) in enumerate(zip(active_trajs, responses)):
             output = response.outputs[0]
-            next_text = output.text
-            stop_reason = output.stop_reason
+            token_ids = output.token_ids
+            logprobs = output.logprobs
             
-            # 2. Immediate Confidence Check
-            conf_metrics = calculate_confidence_score(output.logprobs)
-            score = conf_metrics[strategy_idx]
+            # Chunking logic by \n\n
+            step_token_ids = []
+            step_logprobs = []
+            steps = []
             
-            if needs_correction(score, config.threshold, config.conf_strategy):
-                fixes_needed.append((i, traj, next_text, score, convs[i]))
-            else:
-                # Accept SLM step
-                traj["current_text"] += next_text
-                traj["history"].append(next_text)
-                traj["all_scores"].append(score)
+            for token_id, logprob_dict in zip(token_ids, logprobs):
+                step_token_ids.append(token_id)
+                step_logprobs.append(logprob_dict)
+                text = slm_tokenizer.decode(step_token_ids)
+                if text.endswith("\n\n"):
+                    steps.append((text, step_logprobs))
+                    step_token_ids = []
+                    step_logprobs = []
+            
+            if step_token_ids:
+                steps.append((slm_tokenizer.decode(step_token_ids), step_logprobs))
                 
-                # Check completion
-                if stop_reason == "EOS" or stop_reason == "length" or next_text == "":
-                    traj["completed"] = True
-                elif len(slm_tokenizer.encode(" ".join(traj["history"]))) > 2048:
-                    traj["completed"] = True
+            # 2. Find Bottleneck (First bad step)
+            first_bad_step_idx = -1
+            bad_step_score = None
+            
+            for step_idx, (text, logprob_list) in enumerate(steps):
+                conf_metrics = calculate_confidence_score(logprob_list)
+                score = conf_metrics[strategy_idx]
+                if needs_correction(score, config.threshold, config.conf_strategy):
+                    first_bad_step_idx = step_idx
+                    bad_step_score = score
+                    break
                     
-        # 3. Surgical Intervention (LLM generates replacement steps in BATCH)
+            if first_bad_step_idx != -1:
+                # Add all good steps before the bottleneck to history
+                for step_idx in range(first_bad_step_idx):
+                    text, logprob_list = steps[step_idx]
+                    traj["history"].append(text)
+                    traj["current_text"] += text
+                    conf_metrics = calculate_confidence_score(logprob_list)
+                    traj["all_scores"].append(conf_metrics[strategy_idx])
+                    
+                bad_text, _ = steps[first_bad_step_idx]
+                
+                current_conv = build_conv(traj["prompt"], traj["current_text"], config.system_prompt)
+                fixes_needed.append((traj, bad_text, bad_step_score, current_conv))
+                
+            else:
+                # No bad steps found. The remainder is fully accepted.
+                for step_idx in range(len(steps)):
+                    text, logprob_list = steps[step_idx]
+                    traj["history"].append(text)
+                    traj["current_text"] += text
+                    conf_metrics = calculate_confidence_score(logprob_list)
+                    traj["all_scores"].append(conf_metrics[strategy_idx])
+                    
+                traj["completed"] = True
+                    
+        # 3. Surgical Intervention (LLM fixes the bad step)
         if fixes_needed:
-            # Prepare all prompts for batching
+            logger.info(f"Fixing {len(fixes_needed)} draft completions with LLM...")
             batch_prompts = []
-            for i, traj, slm_text, slm_score, conv in fixes_needed:
+            for traj, slm_text, slm_score, conv in fixes_needed:
                 templated = llm_tokenizer.apply_chat_template(
                     conv, tokenize=False, add_generation_prompt=add_gen_prompt, continue_final_message=cont_final_msg
                 )
                 batch_prompts.append(templated)
             
-            # Batch Tokenize
             llm_tokenizer.padding_side = "left"
             if llm_tokenizer.pad_token is None:
                 llm_tokenizer.pad_token = llm_tokenizer.eos_token
             
             inputs = llm_tokenizer(batch_prompts, return_tensors="pt", padding=True).to(llm.device)
             
-            # Batch Generate
             with torch.no_grad():
                 new_ids_all = llm.generate(
                     **inputs,
@@ -154,42 +182,34 @@ def smart_best_of_n_conf(x, config: Config, slm: LLM, prm: PRM, llm: None):
             
             batch_steps = llm_tokenizer.batch_decode(new_ids_all)
             
-            # Distribute results
-            for j, (i, traj, slm_text, slm_score, conv) in enumerate(fixes_needed):
+            for j, (traj, slm_text, slm_score, conv) in enumerate(fixes_needed):
                 llm_step = batch_steps[j]
                 
-                # Ensure the LLM didn't just return an empty string
                 if not llm_step or llm_step.strip() == "":
                     llm_step = "\n\n"
                 
-                # 4. Append LLM step to history and return control to SLM
+                # Append LLM step to history and return control to SLM in the next iteration
                 traj["current_text"] += llm_step
                 traj["history"].append(llm_step)
-                traj["all_scores"].append(slm_score) # Keep the original low score for analysis
+                traj["all_scores"].append(slm_score) 
                 
                 traj["smart_step"].append(iterate_idx)
                 traj["gen_update"].append((slm_text, llm_step))
                 
-                if llm_step.endswith("\n\n"):
-                    pass # continues loop seamlessly
-                elif len(new_ids_all[j]) >= config.max_tokens:
+                if not llm_step.endswith("\n\n") and len(new_ids_all[j]) >= config.max_tokens:
                     traj["completed"] = True
-                else:
-                    traj["completed"] = True
+            logger.info("LLM batch generation complete. Resuming SLM generation for remaining steps...")
                     
+    logger.info("Batch completed. Selecting final predictions based on confidence scores...")
+    
     # Format output
     completions = [[] for _ in range(len(x["problem"]))]
+    agg_scores = [[] for _ in range(len(x["problem"]))]
     for i, problem in enumerate(x["problem"]):
-        # Find all trajectories for this problem
         problem_trajs = [t for t in trajectories if t["prompt"] == problem]
         completions[i] = [t["current_text"] for t in problem_trajs]
+        agg_scores[i] = [aggregate_scores(t["all_scores"], config.agg_strategy) if len(t["all_scores"]) > 0 else 0 for t in problem_trajs]
         
-    # 5. Final PRM Evaluation
-    prm_scores = prm.score(x["problem"], completions, config.prm_batch_size)
-    agg_scores = [
-        [aggregate_scores(s, config.agg_strategy) for s in score] for score in prm_scores
-    ]
-
     pred = [comp[np.argmax(s)] for comp, s in zip(completions, agg_scores)]
 
     x["completions"] = completions

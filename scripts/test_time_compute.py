@@ -13,7 +13,6 @@ import torch.multiprocessing as mp
 from transformers import AutoModelForCausalLM
 
 from sal.config import Config
-from sal.models.reward_models import load_prm
 from sal.utils.data import get_dataset, save_dataset
 from sal.utils.parser import H4ArgumentParser
 from sal.utils.score import score
@@ -70,17 +69,32 @@ def main():
         raise ValueError(f"Invalid score method: {config.score_method}")
     approach_fn = APPROACHES[approach_name]
     
-    # log the search method and score method
-    print("\nUsing " + \
-        ("SMART" if config.smart_search else "Baseline") + \
-        " search.\nUsing " + \
-        ("Confidence" if config.score_method == 'conf' else "PRM") + \
-        " based score.\n")
+    # Log the search method and score method with detailed parameters
+    print("\n" + "="*50)
+    print("      🚀 SMART INFERENCE PIPELINE INITIALIZED")
+    print("="*50)
+    print(f"Search Approach:      {approach_name.upper()}")
+    print(f"Scoring Method:       {config.score_method.upper()}")
+    
+    if config.score_method == 'conf':
+        print(f"Confidence Strategy:  {config.conf_strategy}")
+        print(f"Aggregation Strategy: {config.agg_strategy}")
+    
+    print("-" * 50)
+    print(f"Dataset:              {config.dataset_name}")
+    print(f"Split:                {config.dataset_split}")
+    
     if config.smart_search:
-        print("Threshold:", config.threshold)
-    print("N:", config.n)
-    print("Beam width:", config.beam_width)
-    print("="*20)
+        print(f"Intervention Threshold: {config.threshold}")
+        print(f"Max Iterations:       {config.num_iterations}")
+    
+    print(f"N (Completions):      {config.n}")
+    if "beam" in approach_name:
+        print(f"Beam Width:           {config.beam_width}")
+    
+    print(f"SLM (Draft):          {config.draft_model_path if config.draft_model_path else config.model_path}")
+    print(f"LLM (Intervention):   {config.model_path}")
+    print("="*50 + "\n")
     
     if config.smart_search:                
         mp.set_start_method("spawn", force=True)
@@ -114,26 +128,22 @@ def main():
         ).eval()
         
         if config.score_method == 'prm':
-            prm = load_prm(config)
-
             dataset = get_dataset(config)
             dataset = dataset.map(
                 approach_fn,
                 batched=True,
                 batch_size=config.search_batch_size,
-                fn_kwargs={"config": config, "slm": slm, "prm": prm, "llm": llm},
+                fn_kwargs={"config": config, "slm": slm, "prm": None, "llm": llm},
                 desc="Running search",
                 load_from_cache_file=False,
             )    
         elif config.score_method == 'conf':
-            prm = load_prm(config)
-            
             dataset = get_dataset(config)
             dataset = dataset.map(
                 approach_fn,
                 batched=True,
                 batch_size=config.search_batch_size,
-                fn_kwargs={"config": config, "slm": slm, "prm": prm, "llm": llm},
+                fn_kwargs={"config": config, "slm": slm, "prm": None, "llm": llm},
                 desc="Running search",
                 load_from_cache_file=False,
             )
@@ -151,27 +161,23 @@ def main():
         )
         
         if config.score_method == 'prm':
-            prm = load_prm(config)
-
             dataset = get_dataset(config)
             dataset = dataset.map(
                 approach_fn,
                 batched=True,
                 batch_size=config.search_batch_size,
-                fn_kwargs={"config": config, "llm": llm, "prm": prm, "slm": None},
+                fn_kwargs={"config": config, "llm": llm, "prm": None, "slm": None},
                 desc="Running search",
                 load_from_cache_file=False,
             )
         
         elif config.score_method == 'conf':
-            prm = load_prm(config)
-            
             dataset = get_dataset(config)
             dataset = dataset.map(
                 approach_fn,
                 batched=True,
                 batch_size=config.search_batch_size,
-                fn_kwargs={"config": config, "llm": llm, "prm": prm, "slm": None},
+                fn_kwargs={"config": config, "llm": llm, "prm": None, "slm": None},
                 desc="Running search",
                 load_from_cache_file=False,
             )    

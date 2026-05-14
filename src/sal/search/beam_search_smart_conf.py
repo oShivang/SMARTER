@@ -21,14 +21,14 @@ from tqdm import tqdm
 from vllm import LLM, SamplingParams
 
 from sal.config import Config
-from sal.models.reward_models import PRM
 
 from .utils import Beam, build_conv, generate_k_steps_with_responses, last, generate_k_steps_for_llm
 
 logger = logging.getLogger()
 from sal.utils.score import aggregate_scores, calculate_confidence_score, STRATEGY_MAP, needs_correction
 
-def _beam_search(batch_of_prompts, config: Config, slm: LLM, prm: PRM, llm: None) -> tuple:
+def _beam_search(batch_of_prompts, config: Config, slm: LLM, llm: None) -> tuple:
+    logger.info("Starting initial SLM generation for beam search...")
     sampling_params = SamplingParams(
         temperature=config.temperature,
         max_tokens=config.max_tokens,
@@ -306,17 +306,13 @@ def _beam_search(batch_of_prompts, config: Config, slm: LLM, prm: PRM, llm: None
             beam.gen_update = [('-1', '-1')]
             beam.llm_tokens = [-1]
     
-    # recalculate prm scores for completed beams
-    prompts = [b.prompt for b in completed_beams]
-    completions = [[b.current_text] for b in completed_beams]
-    prm_scores = prm.score(prompts, completions)
-
-    return completed_beams, total_tokens, prm_scores
+    logger.info("Beam search completed for batch.")
+    return completed_beams, total_tokens
 
 
-def smart_beam_search_conf(examples, config: Config, slm: LLM, prm: PRM, llm: None):
+def smart_beam_search_conf(examples, config: Config, slm: LLM, llm: None, prm=None, **kwargs):
     problems = examples["problem"]
-    beam_results, total_tokens, prm_scores = _beam_search(problems, config, slm, prm, llm)
+    beam_results, total_tokens = _beam_search(problems, config, slm, llm)
 
     # Group together alike beams and store in the dataset
     grouped_results = defaultdict(list)

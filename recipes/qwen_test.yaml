@@ -1,0 +1,23 @@
+# Final Evaluation Configuration
+model_path: "Qwen/Qwen2.5-7B-Instruct"
+draft_model_path: "Qwen/Qwen2.5-1.5B-Instruct"
+
+# Search Settings
+approach: "best_of_n"
+smart_search: true
+score_method: "conf"
+conf_strategy: "probs_mean"
+threshold: 0.8  # Update this after running calibration
+
+# Generation
+n: 4
+num_iterations: 10
+max_tokens: 1024
+temperature: 0.8
+
+# Evaluation
+dataset_name: "HuggingFaceH4/MATH-500"
+dataset_split: "test"
+num_samples: 50
+agg_strategy: "last"
+seed: 42
