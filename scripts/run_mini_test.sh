@@ -33,12 +33,12 @@ for DS in "gsm8k" "math500" "boolq"; do
     
     python scripts/test_time_compute.py \
         recipes/qwen_test.yaml \
-        --dataset_name "$DS" \
-        --smart_search True \
-        --score_method "conf" \
-        --conf_strategy "$METHOD" \
-        --threshold "$THRESHOLD" \
-        --num_samples 2
+        --dataset_name="$DS" \
+        --smart_search=True \
+        --score_method="conf" \
+        --conf_strategy="$METHOD" \
+        --threshold="$THRESHOLD" \
+        --num_samples=2
 done
 
 echo "=================================================="
