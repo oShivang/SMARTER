@@ -217,12 +217,28 @@ def main():
         logger.info("Using simple yes/no matching for BoolQ evaluation")
         def extract_bool(text):
             if not text: return ""
-            text = str(text).lower()
-            if "the answer is yes" in text or "the answer is true" in text: return "yes"
-            if "the answer is no" in text or "the answer is false" in text: return "no"
+            text = str(text).lower().strip()
+            
+            # 1. Check for boxed answers first
             import re
-            if re.search(r'\byes\b', text) or re.search(r'\btrue\b', text): return "yes"
-            if re.search(r'\bno\b', text) or re.search(r'\bfalse\b', text): return "no"
+            boxed = re.findall(r'\\boxed\{(.*?)\}', text)
+            if boxed:
+                ans = boxed[-1].lower().strip()
+                if "yes" in ans or "true" in ans: return "yes"
+                if "no" in ans or "false" in ans: return "no"
+
+            # 2. Check for "The answer is X"
+            match = re.search(r'the answer is[:\s]+(yes|no|true|false)', text)
+            if match:
+                ans = match.group(1)
+                return "yes" if ans in ["yes", "true"] else "no"
+
+            # 3. Fallback to word boundaries at the very end
+            words = re.findall(r'\b(yes|no|true|false)\b', text)
+            if words:
+                ans = words[-1]
+                return "yes" if ans in ["yes", "true"] else "no"
+                
             return ""
 
         correct_counts = {k: 0 for k in keys}

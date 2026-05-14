@@ -40,6 +40,32 @@ def get_gpu_info():
     total_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3) # GB
     return num_gpus, device_capability, total_memory
 
+def extract_bool(text):
+    if not text: return ""
+    text = str(text).lower().strip()
+    
+    # 1. Check for boxed answers first
+    import re
+    boxed = re.findall(r'\\boxed\{(.*?)\}', text)
+    if boxed:
+        ans = boxed[-1].lower().strip()
+        if "yes" in ans or "true" in ans: return "yes"
+        if "no" in ans or "false" in ans: return "no"
+
+    # 2. Check for "The answer is X"
+    match = re.search(r'the answer is[:\s]+(yes|no|true|false)', text)
+    if match:
+        ans = match.group(1)
+        return "yes" if ans in ["yes", "true"] else "no"
+
+    # 3. Fallback to word boundaries at the very end
+    words = re.findall(r'\b(yes|no|true|false)\b', text)
+    if words:
+        ans = words[-1]
+        return "yes" if ans in ["yes", "true"] else "no"
+        
+    return ""
+
 def calibrate():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)
@@ -143,10 +169,8 @@ def calibrate():
                 
                 gt = dataset[prob_idx].get("answer", dataset[prob_idx].get("solution", ""))
                 if ds_name == "boolq":
-                    # The raw BoolQ dataset 'answer' column is a boolean (True/False).
-                    # We map True -> "yes" and False -> "no" for text matching.
                     gt_str = "yes" if dataset[prob_idx]["answer"] else "no"
-                    llm_fixable.append(gt_str in llm_text.lower())
+                    llm_fixable.append(gt_str == extract_bool(llm_text))
                 else:
                     temp_samples = [{"problem": problem, "pred": llm_text, "solution": gt, "answer": gt, "completions": [llm_text]}]
                     _, llm_eval = evaluate(data_name="math", prompt_type="cot", samples=temp_samples, pred_keys=["pred"])
@@ -208,7 +232,7 @@ def calibrate():
                 gt = dataset[prob_idx].get("answer", dataset[prob_idx].get("solution", ""))
                 if ds_name == "boolq":
                     gt_str = "yes" if dataset[prob_idx]["answer"] else "no"
-                    llm_fixable.append(gt_str in llm_text.lower())
+                    llm_fixable.append(gt_str == extract_bool(llm_text))
                 else:
                     temp_samples = [{"problem": problem, "pred": llm_text, "solution": gt, "answer": gt, "completions": [llm_text]}]
                     _, llm_eval = evaluate(data_name="math", prompt_type="cot", samples=temp_samples, pred_keys=["pred"])
@@ -217,7 +241,7 @@ def calibrate():
 
         # --- Accuracy Evaluation & Sweeping (Common) ---
         if ds_name == "boolq":
-            slm_correct_list = [("yes" if dataset[idx]["answer"] else "no") in res["slm_final_text"].lower() for idx, res in enumerate(problem_results)]
+            slm_correct_list = [("yes" if dataset[idx]["answer"] else "no") == extract_bool(res["slm_final_text"]) for idx, res in enumerate(problem_results)]
         else:
             eval_name = "math" if "math" in ds_name or ds_name == "gsm8k" else ds_name
             temp_samples = [{"problem": p, "pred": r["slm_final_text"], "solution": dataset[idx]["answer"], "answer": dataset[idx]["answer"], "completions": [r["slm_final_text"]]} for idx, (p, r) in enumerate(zip(problems, problem_results))]

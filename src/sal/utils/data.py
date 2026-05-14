@@ -43,7 +43,7 @@ def get_dataset(config: Config) -> Dataset:
         split = "validation" if config.dataset_split == "test" else config.dataset_split
         dataset = load_dataset("google/boolq", split=split)
         dataset = dataset.map(lambda x: {
-            "problem": f"Passage: {x['passage']}\nQuestion: {x['question']}",
+            "problem": f"Passage: {x['passage']}\nQuestion: {x['question']}\n\nBased on the passage, is the answer to the question 'yes' or 'no'? Provide your reasoning and end with 'Therefore, the final answer is: \\boxed{{answer}}'.",
             "answer": "yes" if x["answer"] else "no"
         })
     else:
