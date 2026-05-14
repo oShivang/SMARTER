@@ -44,6 +44,7 @@ def calibrate():
     parser.add_argument("--num_calibration_samples", type=int, default=50)
     parser.add_argument("--num_full_samples", type=int, default=None)
     parser.add_argument("--datasets", type=str, default="math500,gsm8k,boolq")
+    parser.add_argument("--gpu_memory_utilization", type=float, default=None)
     args, unknown = parser.parse_known_args()
 
     # Load config
@@ -65,7 +66,7 @@ def calibrate():
     
     # Parallel mode needs more head-room; Sequential can be aggressive
     use_parallel_loading = total_vram > 24
-    gpu_util = 0.4 if use_parallel_loading else 0.5
+    gpu_util = args.gpu_memory_utilization if args.gpu_memory_utilization is not None else (0.4 if use_parallel_loading else 0.5)
     
     logger.info(f"GPU Detected: {total_vram:.1f}GB VRAM. Strategy: {'Parallel' if use_parallel_loading else 'Sequential'} (Util: {gpu_util})")
 
@@ -87,8 +88,8 @@ def calibrate():
             print("Loading SLM and LLM in Parallel...", flush=True)
             slm = LLM(
                 model=draft_model_path, 
-                gpu_memory_utilization=0.8, 
-                enforce_eager=True,
+                gpu_memory_utilization=gpu_util, 
+                enforce_eager=False,
                 enable_prefix_caching=True, 
                 tensor_parallel_size=num_gpus if num_gpus > 0 else 1, 
                 max_model_len=8192, 
@@ -156,7 +157,7 @@ def calibrate():
             print("PHASE 1: Loading SLM (vLLM)...", flush=True)
             slm = LLM(
                 model=draft_model_path, 
-                gpu_memory_utilization=0.8, 
+                gpu_memory_utilization=gpu_util, 
                 enforce_eager=True,
                 enable_prefix_caching=True, 
                 tensor_parallel_size=num_gpus if num_gpus > 0 else 1, 
@@ -297,8 +298,16 @@ def calibrate():
         # --- FULL RUN (Phase 4) ---
         print(f"Launching Full Run for {ds_name} using optimal threshold...", flush=True)
         import subprocess
-        cmd = ["python", "scripts/test_time_compute.py", args.config, f"--dataset_name={ds_name}", "--smart_search=True", "--score_method=conf", f"--conf_strategy={best_ds_config['method']}", f"--threshold={best_ds_config['threshold']:.4f}"]
-        if args.num_full_samples: cmd.append(f"--num_samples={args.num_full_samples}")
+        cmd = [
+            "python", "scripts/test_time_compute.py",
+            "recipes/qwen_test.yaml",
+            f"--dataset_name={ds_name}",
+            "--smart_search=True",
+            "--score_method=conf",
+            f"--conf_strategy={best_ds_config['method']}",
+            f"--threshold={best_ds_config['threshold']}",
+            f"--num_samples={args.num_full_samples}"
+        ]
         subprocess.run(cmd)
 
     print("\n" + "="*50, flush=True)
