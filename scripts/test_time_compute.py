@@ -190,14 +190,16 @@ def main():
         else: 
             raise ValueError(f"Invalid score method: {config.score_method}")
 
-    dataset = score(dataset, config)
+    if not config.smart_search:
+        dataset = score(dataset, config)
+    
     save_dataset(dataset, config)
     
     import sys
     sys.path.append("src/evaluation")
     from evaluation.evaluate import evaluate
     
-    if config.approach == "best_of_n" or config.approach == "beam_search":
+    if not config.smart_search and (config.approach == "best_of_n" or config.approach == "beam_search"):
         # Calculate powers of 2 up to config.n, and explicitly include config.n
         subsets = [2**i for i in range(int(math.log2(config.n)) + 1)]
         if config.n not in subsets:
