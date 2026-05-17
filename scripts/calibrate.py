@@ -388,11 +388,19 @@ def calibrate():
                     triggered = needs_correction(all_bottleneck_scores[i], tau, method)
 
                     if triggered:
-                        # ── FIX 3: Cost = llm_tokens / (slm_tokens + llm_tokens) ──
-                        slm_tokens = sum(s["token_count"] for s in problem_results[i]["steps"])
-                        llm_tokens = llm_token_counts[i]
-                        total_tokens = slm_tokens + llm_tokens
-                        usage_ratio = llm_tokens / total_tokens if total_tokens > 0 else 1.0
+                        # Find which step triggered it to get the token count
+                        trigger_step_idx = -1
+                        for s_idx, step in enumerate(problem_results[i]["steps"]):
+                            if needs_correction(step["scores"][method], tau, method):
+                                trigger_step_idx = s_idx
+                                break
+                        
+                        # Usage Ratio = (Trigger Step Tokens) / (Total Tokens)
+                        # We assume LLM writes about one step. 
+                        # To be conservative, we use the token count of that specific step.
+                        step_tokens = problem_results[i]["steps"][trigger_step_idx]["token_count"]
+                        total_tokens = sum(s["token_count"] for s in problem_results[i]["steps"])
+                        usage_ratio = (step_tokens / total_tokens) if total_tokens > 0 else 1.0
                         problem_token_ratios.append(usage_ratio)
 
                         if llm_fixable[i]: correct += 1
