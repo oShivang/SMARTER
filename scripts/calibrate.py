@@ -29,6 +29,11 @@ logger = logging.getLogger(__name__)
 
 def clear_gpu_memory():
     gc.collect()
+    try:
+        from vllm.distributed.parallel_state import destroy_model_parallel
+        destroy_model_parallel()
+    except Exception:
+        pass
     torch.cuda.empty_cache()
     torch.cuda.ipc_collect()
 
@@ -205,6 +210,11 @@ def calibrate():
                     _, llm_eval = evaluate(data_name="math", prompt_type="cot", samples=temp_samples, pred_keys=["pred"])
                     llm_fixable.append(llm_eval["acc"]["pred"] > 0)
             
+            if hasattr(slm, "llm_engine") and hasattr(slm.llm_engine, "engine_core"):
+                try:
+                    slm.llm_engine.engine_core.shutdown()
+                except Exception:
+                    pass
             del slm, llm
             clear_gpu_memory()
 
@@ -241,6 +251,11 @@ def calibrate():
                     current_text += output.text
                     if output.stop_reason == "EOS" or output.text == "": break
                 problem_results.append({"slm_final_text": current_text, "steps": steps_info})
+            if hasattr(slm, "llm_engine") and hasattr(slm.llm_engine, "engine_core"):
+                try:
+                    slm.llm_engine.engine_core.shutdown()
+                except Exception:
+                    pass
             del slm; clear_gpu_memory()
 
             from transformers import AutoModelForCausalLM, AutoTokenizer
