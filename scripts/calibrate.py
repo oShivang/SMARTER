@@ -33,12 +33,17 @@ def clear_gpu_memory():
     torch.cuda.ipc_collect()
 
 def get_gpu_info():
+    try:
+        import psutil
+        total_sys_ram = psutil.virtual_memory().total / (1024**3)
+    except Exception:
+        total_sys_ram = 32.0
     if not torch.cuda.is_available():
-        return 0, (0, 0), 0
+        return 0, (0, 0), 0, total_sys_ram
     num_gpus = torch.cuda.device_count()
     device_capability = torch.cuda.get_device_capability()
     total_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3) # GB
-    return num_gpus, device_capability, total_memory
+    return num_gpus, device_capability, total_memory, total_sys_ram
 
 def extract_bool(text):
     if not text: return ""
@@ -73,6 +78,7 @@ def calibrate():
     parser.add_argument("--num_full_samples", type=int, default=None)
     parser.add_argument("--datasets", type=str, default="math500,gsm8k,boolq")
     parser.add_argument("--gpu_memory_utilization", type=float, default=None)
+    parser.add_argument("--load_in_4bit", action="store_true")
     args, unknown = parser.parse_known_args()
 
     # Load config
@@ -88,15 +94,22 @@ def calibrate():
     draft_model_path = str(config.draft_model_path) if config.draft_model_path else model_path
     
     # Adaptive Memory Strategy
-    num_gpus, device_capability, total_vram = get_gpu_info()
+    num_gpus, device_capability, total_vram, total_sys_ram = get_gpu_info()
     dtype = "bfloat16" if device_capability[0] >= 8 else "half"
     torch_dtype = torch.bfloat16 if device_capability[0] >= 8 else torch.float16
     
+    # Auto-detect if we should load in 4-bit dynamically based on hardware limits
+    should_load_4bit = args.load_in_4bit
+    if not should_load_4bit:
+        if total_vram > 0 and (total_vram <= 24.0 or total_sys_ram <= 16.0):
+            should_load_4bit = True
+            
     # Parallel mode needs more head-room; Sequential can be aggressive
     use_parallel_loading = total_vram > 24
     gpu_util = args.gpu_memory_utilization if args.gpu_memory_utilization is not None else (0.4 if use_parallel_loading else 0.5)
     
-    logger.info(f"GPU Detected: {total_vram:.1f}GB VRAM. Strategy: {'Parallel' if use_parallel_loading else 'Sequential'} (Util: {gpu_util})")
+    logger.info(f"GPU Detected: {total_vram:.1f}GB VRAM | System RAM: {total_sys_ram:.1f}GB. Strategy: {'Parallel' if use_parallel_loading else 'Sequential'} (Util: {gpu_util})")
+    logger.info(f"Dynamic 4-bit precision loading: {'ENABLED' if should_load_4bit else 'DISABLED'}")
 
     for ds_name in dataset_list:
         logger.info(f"\n{'='*20}\nProcessing Dataset: {ds_name}\n{'='*20}")
@@ -129,12 +142,27 @@ def calibrate():
             
             print("Loading LLM into GPU...", flush=True)
             llm_device_map = "cuda:0" if num_gpus == 1 else "auto"
-            llm = AutoModelForCausalLM.from_pretrained(
-                model_path, 
-                device_map=llm_device_map, 
-                torch_dtype=torch_dtype,
-                low_cpu_mem_usage=True
-            ).eval()
+            if should_load_4bit:
+                from transformers import BitsAndBytesConfig
+                bnb_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=torch.float16,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_use_double_quant=True
+                )
+                llm = AutoModelForCausalLM.from_pretrained(
+                    model_path,
+                    device_map=llm_device_map,
+                    quantization_config=bnb_config,
+                    low_cpu_mem_usage=True
+                ).eval()
+            else:
+                llm = AutoModelForCausalLM.from_pretrained(
+                    model_path, 
+                    device_map=llm_device_map, 
+                    torch_dtype=torch_dtype,
+                    low_cpu_mem_usage=True
+                ).eval()
             llm_tokenizer = AutoTokenizer.from_pretrained(model_path)
             
             sampling_params = SamplingParams(temperature=config.temperature, max_tokens=config.max_tokens, top_p=config.top_p, stop=["\n\n"], n=1, logprobs=10)
@@ -218,7 +246,27 @@ def calibrate():
             from transformers import AutoModelForCausalLM, AutoTokenizer
             print("PHASE 2: Loading LLM (Transformers)...", flush=True)
             llm_device_map = "cuda:0" if num_gpus == 1 else "auto"
-            llm = AutoModelForCausalLM.from_pretrained(model_path, device_map=llm_device_map, torch_dtype=torch_dtype, low_cpu_mem_usage=True).eval()
+            if should_load_4bit:
+                from transformers import BitsAndBytesConfig
+                bnb_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=torch.float16,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_use_double_quant=True
+                )
+                llm = AutoModelForCausalLM.from_pretrained(
+                    model_path,
+                    device_map=llm_device_map,
+                    quantization_config=bnb_config,
+                    low_cpu_mem_usage=True
+                ).eval()
+            else:
+                llm = AutoModelForCausalLM.from_pretrained(
+                    model_path,
+                    device_map=llm_device_map,
+                    torch_dtype=torch_dtype,
+                    low_cpu_mem_usage=True
+                ).eval()
             llm_tokenizer = AutoTokenizer.from_pretrained(model_path)
             
             print(f"Starting LLM evaluation for {len(problems)} problems...", flush=True)
@@ -352,7 +400,7 @@ def calibrate():
                 f"--threshold={best_ds_config['threshold']}",
                 f"--num_samples={args.num_full_samples}"
             ]
-            if args.load_in_4bit:
+            if should_load_4bit:
                 cmd.append("--load_in_4bit=True")
             subprocess.run(cmd)
         elif args.num_full_samples == -1:
@@ -368,7 +416,7 @@ def calibrate():
                 f"--threshold={best_ds_config['threshold']}",
                 "--num_samples=-1"
             ]
-            if args.load_in_4bit:
+            if should_load_4bit:
                 cmd.append("--load_in_4bit=True")
             subprocess.run(cmd)
         else:

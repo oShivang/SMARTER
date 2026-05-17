@@ -126,12 +126,44 @@ def main():
         
         torch.cuda.empty_cache()
 
+        # Auto-detect if we should load in 4-bit dynamically based on hardware limits
+        should_load_4bit = config.load_in_4bit
+        if not should_load_4bit:
+            try:
+                import psutil
+                total_sys_ram = psutil.virtual_memory().total / (1024**3)
+            except Exception:
+                total_sys_ram = 32.0
+            
+            if torch.cuda.is_available():
+                total_vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            else:
+                total_vram = 0
+            
+            if total_vram > 0 and (total_vram <= 24.0 or total_sys_ram <= 16.0):
+                should_load_4bit = True
+                logger.info(f"Auto-detect: VRAM ({total_vram:.1f}GB) or System RAM ({total_sys_ram:.1f}GB) is limited. Dynamically enabling 4-bit precision loading.")
+
         llm_device_map = "cuda:0" if num_gpus == 1 else "auto"
-        llm = AutoModelForCausalLM.from_pretrained(
-            config.model_path,
-            device_map=llm_device_map,
-            torch_dtype=torch_dtype,
-        ).eval()
+        if should_load_4bit:
+            from transformers import BitsAndBytesConfig
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.float16,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True
+            )
+            llm = AutoModelForCausalLM.from_pretrained(
+                config.model_path,
+                device_map=llm_device_map,
+                quantization_config=bnb_config,
+            ).eval()
+        else:
+            llm = AutoModelForCausalLM.from_pretrained(
+                config.model_path,
+                device_map=llm_device_map,
+                torch_dtype=torch_dtype,
+            ).eval()
         
         if config.score_method == 'prm':
             dataset = get_dataset(config)

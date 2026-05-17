@@ -14,7 +14,8 @@ python scripts/calibrate.py \
     --config recipes/qwen_calibrate.yaml \
     --num_calibration_samples 2 \
     --num_full_samples 0 \
-    --datasets "gsm8k,math500,boolq"
+    --datasets "gsm8k,math500,boolq" \
+    "$@"
 
 # 2. Run Mini Evaluation
 for DS in "gsm8k" "math500" "boolq"; do
