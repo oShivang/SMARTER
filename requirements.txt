@@ -6,9 +6,9 @@ transformers==4.46.0
 fastapi
 hf_transfer
 timeout-decorator
-numpy
+numpy<2
 tqdm
-vllm==0.6.3
+vllm
 datasets
 huggingface_hub
 pyyaml
@@ -16,5 +16,5 @@ groq
 regex
 sympy==1.12
 python_dateutil
-antlr4-python3-runtime==4.7.2
-flash-attn
+antlr4-python3-runtime==4.9.3
+bitsandbytes

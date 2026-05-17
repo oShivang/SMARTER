@@ -391,6 +391,11 @@ def calibrate():
 
         plt.xlabel("Cost (% LLM Calls)"); plt.ylabel("Accuracy (%)"); plt.title(f"Elbow Graph - {ds_name}"); plt.legend(); plt.grid(True)
         plt.savefig(f"outputs/calibration/elbow_{ds_name}.png"); plt.close()
+        
+        # Fallback to probs_mean with threshold 0.0 if no method outperformed SLM (e.g. 0% calibration accuracy)
+        if best_ds_config["method"] is None:
+            best_ds_config = {"method": "probs_mean", "threshold": 0.0, "acc": 0.0, "cost": 0.0}
+            
         all_dataset_results[ds_name] = {"best_config": best_ds_config, "all_methods": method_stats}
         
         print("\n" + "-"*40, flush=True)
@@ -441,7 +446,9 @@ def calibrate():
     print("ALL CALIBRATIONS COMPLETE", flush=True)
     for ds, res in all_dataset_results.items():
         bc = res["best_config"]
-        print(f"Dataset: {ds:10} | Best Method: {bc['method']:12} | Threshold: {bc['threshold']:.6f}", flush=True)
+        method_str = str(bc['method']) if bc['method'] is not None else "None"
+        threshold_val = bc['threshold'] if bc['threshold'] is not None else 0.0
+        print(f"Dataset: {ds:10} | Best Method: {method_str:12} | Threshold: {threshold_val:.6f}", flush=True)
     print("="*50 + "\n", flush=True)
 
     with open("outputs/calibration/calibration_summary.json", "w") as f:
