@@ -2,6 +2,9 @@ import sys
 import os
 sys.path.append(os.path.abspath("src"))
 
+import warnings
+warnings.filterwarnings("ignore")
+
 import logging
 import random
 import numpy as np

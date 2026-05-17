@@ -4,6 +4,12 @@
 
 set -e
 
+# Silence Python warnings, HuggingFace Hub telemetry, and verbose vLLM init logs
+export PYTHONWARNINGS="ignore"
+export VLLM_LOGGING_LEVEL="WARNING"
+export HF_HUB_DISABLE_SYMLINKS_WARNING="1"
+export HF_HUB_DISABLE_TELEMETRY="1"
+
 echo "=================================================="
 echo "      🧪 STARTING MINI SMART TEST (2 SAMPLES)"
 echo "=================================================="

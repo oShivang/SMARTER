@@ -21,7 +21,23 @@ from multiprocessing import Manager
 from typing import Any, Dict, List, Literal
 
 import numpy as np
-from latex2sympy2 import latex2sympy
+import os
+import sys
+from contextlib import contextmanager
+
+@contextmanager
+def silence_stderr():
+    new_target = open(os.devnull, 'w')
+    old_target = sys.stderr
+    sys.stderr = new_target
+    try:
+        yield
+    finally:
+        sys.stderr = old_target
+        new_target.close()
+
+with silence_stderr():
+    from latex2sympy2 import latex2sympy
 from sympy import latex, simplify
 
 from .qwen_math_parser import extract_answer, strip_string

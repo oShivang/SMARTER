@@ -2,7 +2,23 @@ import random
 import regex
 import re
 import sympy
-from latex2sympy2 import latex2sympy
+import os
+import sys
+from contextlib import contextmanager
+
+@contextmanager
+def silence_stderr():
+    new_target = open(os.devnull, 'w')
+    old_target = sys.stderr
+    sys.stderr = new_target
+    try:
+        yield
+    finally:
+        sys.stderr = old_target
+        new_target.close()
+
+with silence_stderr():
+    from latex2sympy2 import latex2sympy
 from typing import TypeVar, Iterable, List, Union, Any, Dict
 from word2number import w2n
 from utils import *
