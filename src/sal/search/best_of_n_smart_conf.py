@@ -173,12 +173,23 @@ def smart_best_of_n_conf(x, config: Config, slm: LLM, llm: None, prm=None, **kwa
             
             inputs = llm_tokenizer(batch_prompts, return_tensors="pt", padding=True).to(llm.device)
             
-            with torch.no_grad():
-                new_ids_all = llm.generate(
-                    **inputs,
-                    stopping_criteria=[stopping_criteria],
-                    generation_config=generation_config
-                )[:, inputs["input_ids"].shape[1]:]
+            # Chunk LLM generation to prevent OOM when many trajectories are triggered.
+            # Generating for 97 sequences at once on a 40GB A100 causes peak OOM.
+            llm_chunk_size = 8
+            all_new_ids = []
+            for chunk_start in range(0, inputs["input_ids"].shape[0], llm_chunk_size):
+                chunk_input = {k: v[chunk_start:chunk_start+llm_chunk_size] for k, v in inputs.items()}
+                with torch.no_grad():
+                    chunk_ids = llm.generate(
+                        **chunk_input,
+                        stopping_criteria=[stopping_criteria],
+                        generation_config=generation_config
+                    )[:, chunk_input["input_ids"].shape[1]:]
+                all_new_ids.append(chunk_ids)
+                del chunk_input, chunk_ids
+                torch.cuda.empty_cache()
+            new_ids_all = torch.cat(all_new_ids, dim=0)
+            del all_new_ids
             
             batch_steps = llm_tokenizer.batch_decode(new_ids_all)
             
