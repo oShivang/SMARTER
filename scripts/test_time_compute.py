@@ -1,5 +1,6 @@
 import sys
 import os
+os.environ["PYTHONWARNINGS"] = "ignore"
 sys.path.append(os.path.abspath("src"))
 
 import warnings
@@ -34,6 +35,7 @@ import datasets
 datasets.utils.logging.set_verbosity_warning()
 import transformers
 transformers.logging.set_verbosity_warning()
+logging.getLogger("datasets.fingerprint").setLevel(logging.ERROR)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
