@@ -204,6 +204,10 @@ def calibrate():
                     current_text += output.text
                     if output.stop_reason == "EOS" or output.text == "": break
                 problem_results.append({"slm_final_text": current_text, "steps": steps_info})
+                n_steps = len(steps_info)
+                total_toks = sum(s["token_count"] for s in steps_info)
+                if prob_idx % 5 == 0:
+                    print(f"  [SLM] prob {prob_idx+1}: steps={n_steps}, total_tokens={total_toks}, tokens_per_step~{total_toks//max(n_steps,1)}", flush=True)
 
                 # LLM part
                 conv = build_conv(problem, "", config.system_prompt)
@@ -223,6 +227,9 @@ def calibrate():
                     temp_samples = [{"problem": problem, "pred": llm_text, "solution": gt, "answer": gt, "completions": [llm_text]}]
                     _, llm_eval = evaluate(data_name="math", prompt_type="cot", samples=temp_samples, pred_keys=["pred"])
                     llm_fixable.append(llm_eval["acc"]["pred"] > 0)
+                running_llm_acc = sum(llm_fixable) / len(llm_fixable) * 100
+                if prob_idx % 5 == 0:
+                    print(f"  [LLM] prob {prob_idx+1}: llm_tokens={llm_out_tokens}, running_llm_acc={running_llm_acc:.1f}%", flush=True)
             
             if hasattr(slm, "llm_engine") and hasattr(slm.llm_engine, "engine_core"):
                 try:
@@ -231,6 +238,10 @@ def calibrate():
                     pass
             del slm, llm
             clear_gpu_memory()
+            avg_steps = sum(len(r["steps"]) for r in problem_results) / max(len(problem_results), 1)
+            avg_toks  = sum(sum(s["token_count"] for s in r["steps"]) for r in problem_results) / max(len(problem_results), 1)
+            print(f"\n[PARALLEL] SLM summary: avg_steps={avg_steps:.2f}, avg_total_tokens={avg_toks:.1f}", flush=True)
+            print(f"[PARALLEL] LLM accuracy over calibration set: {sum(llm_fixable)/len(llm_fixable)*100:.1f}%", flush=True)
 
         else:
             # --- SEQUENTIAL MODE (Safe for T4) ---
@@ -267,12 +278,19 @@ def calibrate():
                     current_text += output.text
                     if output.stop_reason == "EOS" or output.text == "": break
                 problem_results.append({"slm_final_text": current_text, "steps": steps_info})
+                n_steps = len(steps_info)
+                total_toks = sum(s["token_count"] for s in steps_info)
+                if prob_idx % 5 == 0:
+                    print(f"  [SLM] prob {prob_idx+1}: steps={n_steps}, total_tokens={total_toks}, tokens_per_step~{total_toks//max(n_steps,1)}", flush=True)
             if hasattr(slm, "llm_engine") and hasattr(slm.llm_engine, "engine_core"):
                 try:
                     slm.llm_engine.engine_core.shutdown()
                 except Exception:
                     pass
             del slm; clear_gpu_memory()
+            avg_steps = sum(len(r["steps"]) for r in problem_results) / max(len(problem_results), 1)
+            avg_toks  = sum(sum(s["token_count"] for s in r["steps"]) for r in problem_results) / max(len(problem_results), 1)
+            print(f"\n[SEQUENTIAL] SLM summary: avg_steps={avg_steps:.2f}, avg_total_tokens={avg_toks:.1f}", flush=True)
 
             from transformers import AutoModelForCausalLM, AutoTokenizer
             print("PHASE 2: Loading LLM (Transformers)...", flush=True)
@@ -319,7 +337,11 @@ def calibrate():
                     temp_samples = [{"problem": problem, "pred": llm_text, "solution": gt, "answer": gt, "completions": [llm_text]}]
                     _, llm_eval = evaluate(data_name="math", prompt_type="cot", samples=temp_samples, pred_keys=["pred"])
                     llm_fixable.append(llm_eval["acc"]["pred"] > 0)
+                running_llm_acc = sum(llm_fixable) / len(llm_fixable) * 100
+                if prob_idx % 5 == 0:
+                    print(f"  [LLM] prob {prob_idx+1}: llm_tokens={llm_out_tokens}, running_llm_acc={running_llm_acc:.1f}%", flush=True)
             del llm; clear_gpu_memory()
+            print(f"[SEQUENTIAL] LLM accuracy over calibration set: {sum(llm_fixable)/len(llm_fixable)*100:.1f}%", flush=True)
 
         # --- Accuracy Evaluation & Sweeping (Common) ---
         if ds_name == "boolq":
@@ -337,19 +359,20 @@ def calibrate():
             slm_eval_samples, _ = evaluate(data_name=eval_name, prompt_type="cot", samples=temp_samples, pred_keys=["pred"])
             slm_correct_list = [s["correct_completions"][0] for s in slm_eval_samples]
 
+        slm_acc = sum(slm_correct_list) / len(slm_correct_list) * 100
+        llm_acc = sum(llm_fixable) / len(llm_fixable) * 100
+        fixable_mask = [(not slm_correct_list[i]) and llm_fixable[i] for i in range(len(problems))]
+        print(f"\n{'='*50}", flush=True)
+        print(f"[{ds_name.upper()}] DATA SUMMARY", flush=True)
+        print(f"  SLM accuracy       : {slm_acc:.1f}%", flush=True)
+        print(f"  LLM accuracy       : {llm_acc:.1f}%", flush=True)
+        print(f"  Fixable problems   : {sum(fixable_mask)}/{len(problems)} (SLM wrong, LLM right)", flush=True)
+        print(f"  Both wrong         : {sum(not slm_correct_list[i] and not llm_fixable[i] for i in range(len(problems)))}/{len(problems)}", flush=True)
+        print(f"{'='*50}\n", flush=True)
+
         best_ds_config = {"method": None, "threshold": 0, "acc": 0, "cost": 0}
         plt.figure(figsize=(10, 6))
         method_stats = {}
-
-        # ── FIX 1: Compute bottleneck scores ONLY for fixable problems ──
-        # A "fixable" problem is one where SLM was WRONG but LLM was RIGHT.
-        # These are the only problems where an intervention would actually help,
-        # so only their worst-step scores should drive the threshold calibration.
-        fixable_mask = [
-            (not slm_correct_list[i]) and llm_fixable[i]
-            for i in range(len(problems))
-        ]
-        print(f"Fixable problems (SLM wrong, LLM right): {sum(fixable_mask)}/{len(problems)}", flush=True)
 
         for method in ["probs_mean", "probs_min", "entropy", "top_2_diff", "mean_least_3"]:
             # ── FIX 2: Collect bottleneck (worst-step) score per problem ──
@@ -423,6 +446,7 @@ def calibrate():
                 best_ds_config = {"method": method, "threshold": thresholds[best_idx], "acc": accs[best_idx], "cost": costs[best_idx]}
             method_stats[method] = {"thresholds": thresholds.tolist(), "accuracies": accs, "costs": costs}
             plt.plot(costs, accs, marker='o', label=method)
+            print(f"  [{method:12}] best: acc={accs[best_idx]:.1f}% at cost={costs[best_idx]:.2f}% | threshold={thresholds[best_idx]:.6f} | cost_range=[{min(costs):.2f}%, {max(costs):.2f}%]", flush=True)
 
         plt.xlabel("Cost (% LLM Calls)"); plt.ylabel("Accuracy (%)"); plt.title(f"Elbow Graph - {ds_name}"); plt.legend(); plt.grid(True)
         plt.savefig(f"outputs/calibration/elbow_{ds_name}.png"); plt.close()
