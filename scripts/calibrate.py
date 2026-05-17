@@ -135,6 +135,7 @@ def calibrate():
 
         problem_results = []
         llm_fixable = []
+        llm_token_counts = []  # Token count of LLM output per problem
 
         if use_parallel_loading:
             # --- PARALLEL MODE (Fast for A100/L4) ---
@@ -208,6 +209,8 @@ def calibrate():
                 input_ids = llm_tokenizer(templated, return_tensors="pt").to(llm.device)
                 with torch.no_grad():
                     out_ids = llm.generate(**input_ids, max_new_tokens=config.max_tokens)
+                llm_out_tokens = out_ids.shape[1] - input_ids.input_ids.shape[1]
+                llm_token_counts.append(llm_out_tokens)
                 llm_text = llm_tokenizer.decode(out_ids[0][input_ids.input_ids.shape[1]:], skip_special_tokens=True)
                 
                 gt = dataset[prob_idx].get("answer", dataset[prob_idx].get("solution", ""))
@@ -302,6 +305,8 @@ def calibrate():
                 input_ids = llm_tokenizer(templated, return_tensors="pt").to(llm.device)
                 with torch.no_grad():
                     out_ids = llm.generate(**input_ids, max_new_tokens=config.max_tokens)
+                llm_out_tokens = out_ids.shape[1] - input_ids.input_ids.shape[1]
+                llm_token_counts.append(llm_out_tokens)
                 llm_text = llm_tokenizer.decode(out_ids[0][input_ids.input_ids.shape[1]:], skip_special_tokens=True)
                 gt = dataset[prob_idx].get("answer", dataset[prob_idx].get("solution", ""))
                 if "boolq" in ds_name.lower():
@@ -337,50 +342,68 @@ def calibrate():
         best_ds_config = {"method": None, "threshold": 0, "acc": 0, "cost": 0}
         plt.figure(figsize=(10, 6))
         method_stats = {}
+
+        # ── FIX 1: Compute bottleneck scores ONLY for fixable problems ──
+        # A "fixable" problem is one where SLM was WRONG but LLM was RIGHT.
+        # These are the only problems where an intervention would actually help,
+        # so only their worst-step scores should drive the threshold calibration.
+        fixable_mask = [
+            (not slm_correct_list[i]) and llm_fixable[i]
+            for i in range(len(problems))
+        ]
+        print(f"Fixable problems (SLM wrong, LLM right): {sum(fixable_mask)}/{len(problems)}", flush=True)
+
         for method in ["probs_mean", "probs_min", "entropy", "top_2_diff", "mean_least_3"]:
-            # Find the bottleneck score for each problem
-            bottleneck_scores = []
+            # ── FIX 2: Collect bottleneck (worst-step) score per problem ──
+            # For ALL problems (needed for the full threshold sweep below)
+            all_bottleneck_scores = []
             for res in problem_results:
                 scores = [step["scores"][method] for step in res["steps"]]
-                if not scores: continue
-                # Worst score: min for probs, max for entropy
-                if method == "entropy" or method == "mean_least_3":
-                    bottleneck_scores.append(max(scores))
+                if not scores:
+                    all_bottleneck_scores.append(None)
+                    continue
+                # Worst score: max entropy (high = uncertain), min for probs (low = uncertain)
+                if method in ("entropy", "mean_least_3"):
+                    all_bottleneck_scores.append(max(scores))
                 else:
-                    bottleneck_scores.append(min(scores))
-            
-            if not bottleneck_scores: continue
-            
-            thresholds = np.linspace(min(bottleneck_scores), max(bottleneck_scores), 20)
+                    all_bottleneck_scores.append(min(scores))
+
+            # Derive threshold range ONLY from fixable problems
+            fixable_scores = [
+                all_bottleneck_scores[i]
+                for i in range(len(problems))
+                if fixable_mask[i] and all_bottleneck_scores[i] is not None
+            ]
+            if not fixable_scores:
+                print(f"  [{method}] No fixable problems found – skipping.", flush=True)
+                continue
+
+            thresholds = np.linspace(min(fixable_scores), max(fixable_scores), 20)
             accs, costs = [], []
             for tau in thresholds:
                 correct = 0
                 problem_token_ratios = []
                 for i in range(len(problems)):
-                    # Check if the bottleneck triggers an intervention
-                    triggered = needs_correction(bottleneck_scores[i], tau, method)
-                    
+                    if all_bottleneck_scores[i] is None:
+                        problem_token_ratios.append(0.0)
+                        if slm_correct_list[i]: correct += 1
+                        continue
+
+                    triggered = needs_correction(all_bottleneck_scores[i], tau, method)
+
                     if triggered:
-                        # Find which step triggered it to get the token count
-                        trigger_step_idx = -1
-                        for s_idx, step in enumerate(problem_results[i]["steps"]):
-                            if needs_correction(step["scores"][method], tau, method):
-                                trigger_step_idx = s_idx
-                                break
-                        
-                        # Usage Ratio = (Trigger Step Tokens) / (Total Tokens)
-                        # We assume LLM writes about one step. 
-                        # To be conservative, we use the token count of that specific step.
-                        step_tokens = problem_results[i]["steps"][trigger_step_idx]["token_count"]
-                        total_tokens = sum(s["token_count"] for s in problem_results[i]["steps"])
-                        usage_ratio = (step_tokens / total_tokens) if total_tokens > 0 else 1.0
+                        # ── FIX 3: Cost = llm_tokens / (slm_tokens + llm_tokens) ──
+                        slm_tokens = sum(s["token_count"] for s in problem_results[i]["steps"])
+                        llm_tokens = llm_token_counts[i]
+                        total_tokens = slm_tokens + llm_tokens
+                        usage_ratio = llm_tokens / total_tokens if total_tokens > 0 else 1.0
                         problem_token_ratios.append(usage_ratio)
-                        
+
                         if llm_fixable[i]: correct += 1
                     else:
                         problem_token_ratios.append(0.0)
                         if slm_correct_list[i]: correct += 1
-                
+
                 accuracy = (correct / len(problems)) * 100
                 cost = np.mean(problem_token_ratios) * 100
                 accs.append(accuracy); costs.append(cost)
