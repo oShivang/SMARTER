@@ -181,9 +181,8 @@ def calibrate():
                 ).eval()
             llm_tokenizer = AutoTokenizer.from_pretrained(model_path)
             
-            # Limit per-step tokens to 256 to force shorter steps and restore curved elbow graph.
-            step_max_tokens = 256
-            sampling_params = SamplingParams(temperature=config.temperature, max_tokens=step_max_tokens, top_p=config.top_p, stop=["\n\n"], n=1, logprobs=10)
+            # Limit per-step tokens to 128 to force shorter steps and restore curved elbow graph.
+            sampling_params = SamplingParams(temperature=config.temperature, max_tokens=config.max_tokens, top_p=config.top_p, stop=["\n\n"], n=1, logprobs=10)
 
             for prob_idx, problem in enumerate(problems):
                 # Print progress to prevent the appearance of being "stuck"
@@ -259,8 +258,7 @@ def calibrate():
             )
             print("SLM Loaded successfully.", flush=True)
             # Use short per-step max_tokens so each \n\n break creates a distinct step.
-            step_max_tokens = 256
-            sampling_params = SamplingParams(temperature=config.temperature, max_tokens=step_max_tokens, top_p=config.top_p, stop=["\n\n"], n=1, logprobs=10)
+            sampling_params = SamplingParams(temperature=config.temperature, max_tokens=config.max_tokens, top_p=config.top_p, stop=["\n\n"], n=1, logprobs=10)
 
             print(f"Starting SLM generation for {len(problems)} problems...", flush=True)
             for prob_idx, problem in enumerate(problems):
