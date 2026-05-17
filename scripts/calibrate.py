@@ -181,10 +181,7 @@ def calibrate():
                 ).eval()
             llm_tokenizer = AutoTokenizer.from_pretrained(model_path)
             
-            # Use short per-step max_tokens so each 
-
- break creates a distinct step.
-            # This ensures varied step ratios across problems → curved elbow graph.
+            # Limit per-step tokens to 256 to force shorter steps and restore curved elbow graph.
             step_max_tokens = 256
             sampling_params = SamplingParams(temperature=config.temperature, max_tokens=step_max_tokens, top_p=config.top_p, stop=["\n\n"], n=1, logprobs=10)
 
