@@ -1,20 +1,41 @@
-accelerate
-Pebble
-latex2sympy2==1.9.1
-word2number
+# ── Core Inference ──────────────────────────────────────────────────────────
+vllm==0.6.3
+torch==2.4.0
+xformers==0.0.27.post2
+outlines==0.0.46
+
+# ── Transformers stack ───────────────────────────────────────────────────────
 transformers==4.46.0
-fastapi
+tokenizers==0.20.3
+accelerate==1.13.0
+huggingface_hub==0.24.7
+safetensors>=0.4.1
+
+# ── Data ────────────────────────────────────────────────────────────────────
+datasets==2.20.0          # pinned: outlines 0.0.46 requires datasets <3
 hf_transfer
-timeout-decorator
-numpy<2
-tqdm
-vllm
-datasets
-huggingface_hub
-pyyaml
-groq
-regex
+
+# ── Math / Evaluation ───────────────────────────────────────────────────────
 sympy==1.12
-python_dateutil
+latex2sympy2==1.9.1
 antlr4-python3-runtime==4.9.3
-bitsandbytes
+word2number
+regex
+python_dateutil
+
+# ── Serving / Utils ─────────────────────────────────────────────────────────
+fastapi
+uvicorn[standard]
+pyyaml
+tqdm
+psutil
+sentencepiece
+timeout-decorator
+Pebble
+groq
+
+# ── Optional: 4-bit quant (install manually if needed, skip on A100 with full BF16) ──
+# bitsandbytes
+
+# ── numpy MUST be last — pins <2 to prevent vllm/outlines breakage ─────────
+numpy<2.0.0
