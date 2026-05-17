@@ -30,6 +30,10 @@ from sal.search import \
     smart_beam_search_conf
 from datasets import Dataset
 logging.basicConfig(level=logging.INFO)
+import datasets
+datasets.utils.logging.set_verbosity_warning()
+import transformers
+transformers.logging.set_verbosity_warning()
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

@@ -28,6 +28,11 @@ from evaluation.evaluate import evaluate
 from datasets import Dataset
 
 logging.basicConfig(level=logging.INFO)
+import datasets
+datasets.utils.logging.set_verbosity_warning()
+import transformers
+transformers.logging.set_verbosity_warning()
+
 logger = logging.getLogger(__name__)
 
 def clear_gpu_memory():
