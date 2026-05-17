@@ -37,8 +37,13 @@ def timeout_handler(signum, frame):
     raise TimeoutException
 
 
-manager = Manager()
-shared_cache = manager.dict()
+import multiprocessing
+if multiprocessing.current_process().name == 'MainProcess':
+    manager = Manager()
+    shared_cache = manager.dict()
+else:
+    manager = None
+    shared_cache = {}
 
 
 def memoized_canonical_form(expression: str, timeout_seconds: int = 3) -> str:
