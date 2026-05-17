@@ -15,6 +15,7 @@ python scripts/calibrate.py \
     --num_calibration_samples 2 \
     --num_full_samples 0 \
     --datasets "gsm8k,math500,boolq" \
+    --model_path="Qwen/Qwen2.5-1.5B-Instruct" \
     "$@"
 
 # 2. Run Mini Evaluation
@@ -39,7 +40,8 @@ for DS in "gsm8k" "math500" "boolq"; do
         --score_method="conf" \
         --conf_strategy="$METHOD" \
         --threshold="$THRESHOLD" \
-        --num_samples=2
+        --num_samples=2 \
+        --model_path="Qwen/Qwen2.5-1.5B-Instruct"
 done
 
 echo "=================================================="

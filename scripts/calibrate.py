@@ -84,7 +84,7 @@ def calibrate():
     # Load config
     from sal.utils.parser import H4ArgumentParser
     h4_parser = H4ArgumentParser(Config)
-    config = h4_parser.parse_yaml_file(os.path.abspath(args.config))[0]
+    config = h4_parser.parse_yaml_and_args(args.config, unknown)[0]
     
     dataset_list = args.datasets.split(",")
     os.makedirs("outputs/calibration", exist_ok=True)
