@@ -368,17 +368,13 @@ def calibrate():
                 else:
                     all_bottleneck_scores.append(min(scores))
 
-            # Derive threshold range ONLY from fixable problems
-            fixable_scores = [
-                all_bottleneck_scores[i]
-                for i in range(len(problems))
-                if fixable_mask[i] and all_bottleneck_scores[i] is not None
-            ]
-            if not fixable_scores:
-                print(f"  [{method}] No fixable problems found – skipping.", flush=True)
+            # Derive threshold range from ALL bottleneck scores so the sweep covers 0% to 100% cost
+            valid_scores = [s for s in all_bottleneck_scores if s is not None]
+            if not valid_scores:
+                print(f"  [{method}] No valid scores found – skipping.", flush=True)
                 continue
 
-            thresholds = np.linspace(min(fixable_scores), max(fixable_scores), 20)
+            thresholds = np.linspace(min(valid_scores), max(valid_scores), 20)
             accs, costs = [], []
             for tau in thresholds:
                 correct = 0

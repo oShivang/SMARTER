@@ -10,12 +10,12 @@ echo "=================================================="
 
 # 1. Run Calibration for all datasets
 # We use 100 samples for calibration to get a robust threshold
-echo "PHASE 1: CALIBRATION SWEEP (GSM8K, MATH500, BOOLQ)"
+echo "PHASE 1: CALIBRATION SWEEP (BOOLQ, GSM8K, MATH500)"
 python scripts/calibrate.py \
     --config recipes/qwen_calibrate.yaml \
     --num_calibration_samples 100 \
     --num_full_samples 0 \
-    --datasets "gsm8k,math500,boolq"
+    --datasets "boolq,gsm8k,math500"
 
 echo "Calibration Complete. Results saved in outputs/calibration/"
 
@@ -26,7 +26,7 @@ echo "Calibration Complete. Results saved in outputs/calibration/"
 # Get thresholds from the summary (we can also just let calibrate.py launch them, 
 # but running them manually here ensures we don't miss any logs)
 
-for DS in "gsm8k" "math500" "boolq"; do
+for DS in "boolq" "gsm8k" "math500"; do
     echo "--------------------------------------------------"
     echo "📊 EVALUATING FULL DATASET: $DS"
     echo "--------------------------------------------------"
