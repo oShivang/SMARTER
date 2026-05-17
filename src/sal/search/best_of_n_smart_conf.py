@@ -174,7 +174,6 @@ def smart_best_of_n_conf(x, config: Config, slm: LLM, llm: None, prm=None, **kwa
             inputs = llm_tokenizer(batch_prompts, return_tensors="pt", padding=True).to(llm.device)
             
             # Chunk LLM generation to prevent OOM when many trajectories are triggered.
-            # Generating for 97 sequences at once on a 40GB A100 causes peak OOM.
             llm_chunk_size = 8
             all_new_ids = []
             for chunk_start in range(0, inputs["input_ids"].shape[0], llm_chunk_size):
@@ -188,8 +187,18 @@ def smart_best_of_n_conf(x, config: Config, slm: LLM, llm: None, prm=None, **kwa
                 all_new_ids.append(chunk_ids)
                 del chunk_input, chunk_ids
                 torch.cuda.empty_cache()
-            new_ids_all = torch.cat(all_new_ids, dim=0)
-            del all_new_ids
+            
+            # Each chunk may produce sequences of different lengths → pad to max before cat.
+            pad_id = llm_tokenizer.pad_token_id if llm_tokenizer.pad_token_id is not None else llm_tokenizer.eos_token_id
+            max_len = max(c.shape[1] for c in all_new_ids)
+            padded_chunks = []
+            for c in all_new_ids:
+                if c.shape[1] < max_len:
+                    pad = torch.full((c.shape[0], max_len - c.shape[1]), pad_id, dtype=c.dtype, device=c.device)
+                    c = torch.cat([c, pad], dim=1)
+                padded_chunks.append(c)
+            new_ids_all = torch.cat(padded_chunks, dim=0)
+            del all_new_ids, padded_chunks
             
             batch_steps = llm_tokenizer.batch_decode(new_ids_all)
             
