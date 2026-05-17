@@ -70,21 +70,25 @@ def evaluate(data_name, prompt_type, samples: list=None, file_path: str=None, ma
             scores.append(False)
             timeout_cnt += 1
         except Exception as error:
-            print(error)
-            exit()
+            import traceback
+            traceback.print_exc()
+            scores.append(False)
         progress_bar.update(1)
     progress_bar.close()
     
     # calculate scores for each completions
     for sample in samples:
-        sample['pred_completions'] = [extract_answer(completion, data_name) for completion in sample['completions']]
+        if 'completions' in sample and sample['completions'] is not None:
+            sample['pred_completions'] = [extract_answer(completion, data_name) for completion in sample['completions']]
+        else:
+            sample['pred_completions'] = []
         
     # calculate scores for final prediction
     params = [(idx, pred, sample['gt']) for idx, sample in enumerate(samples) for pred in sample['pred_completions']]
     completion_scores = []
     timeout_cnt = 0 
 
-    progress_bar = tqdm(total=len(samples), desc="Extract correctness for each completion")
+    progress_bar = tqdm(total=len(params), desc="Extract correctness for each completion")
     for idx, pred, gt in params:
         try:
             result = math_equal_process((idx, pred, gt))
@@ -94,8 +98,9 @@ def evaluate(data_name, prompt_type, samples: list=None, file_path: str=None, ma
             completion_scores.append(False)
             timeout_cnt += 1
         except Exception as error:
-            print(error)
-            exit()
+            import traceback
+            traceback.print_exc()
+            completion_scores.append(False)
         progress_bar.update(1)
     progress_bar.close()
     

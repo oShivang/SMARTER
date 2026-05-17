@@ -168,8 +168,9 @@ def calibrate():
                 llm_text = llm_tokenizer.decode(out_ids[0][input_ids.input_ids.shape[1]:], skip_special_tokens=True)
                 
                 gt = dataset[prob_idx].get("answer", dataset[prob_idx].get("solution", ""))
-                if ds_name == "boolq":
-                    gt_str = "yes" if dataset[prob_idx]["answer"] else "no"
+                if "boolq" in ds_name.lower():
+                    gt_ans_val = dataset[prob_idx]["answer"]
+                    gt_str = gt_ans_val if isinstance(gt_ans_val, str) else ("yes" if gt_ans_val else "no")
                     llm_fixable.append(gt_str == extract_bool(llm_text))
                 else:
                     temp_samples = [{"problem": problem, "pred": llm_text, "solution": gt, "answer": gt, "completions": [llm_text]}]
@@ -230,8 +231,9 @@ def calibrate():
                     out_ids = llm.generate(**input_ids, max_new_tokens=config.max_tokens)
                 llm_text = llm_tokenizer.decode(out_ids[0][input_ids.input_ids.shape[1]:], skip_special_tokens=True)
                 gt = dataset[prob_idx].get("answer", dataset[prob_idx].get("solution", ""))
-                if ds_name == "boolq":
-                    gt_str = "yes" if dataset[prob_idx]["answer"] else "no"
+                if "boolq" in ds_name.lower():
+                    gt_ans_val = dataset[prob_idx]["answer"]
+                    gt_str = gt_ans_val if isinstance(gt_ans_val, str) else ("yes" if gt_ans_val else "no")
                     llm_fixable.append(gt_str == extract_bool(llm_text))
                 else:
                     temp_samples = [{"problem": problem, "pred": llm_text, "solution": gt, "answer": gt, "completions": [llm_text]}]
@@ -240,10 +242,21 @@ def calibrate():
             del llm; clear_gpu_memory()
 
         # --- Accuracy Evaluation & Sweeping (Common) ---
-        if ds_name == "boolq":
-            slm_correct_list = [("yes" if dataset[idx]["answer"] else "no") == extract_bool(res["slm_final_text"]) for idx, res in enumerate(problem_results)]
+        if "boolq" in ds_name.lower():
+            slm_correct_list = []
+            for idx, res in enumerate(problem_results):
+                gt_val = dataset[idx]["answer"]
+                gt_str = gt_val if isinstance(gt_val, str) else ("yes" if gt_val else "no")
+                slm_correct_list.append(gt_str == extract_bool(res["slm_final_text"]))
         else:
-            eval_name = "math" if "math" in ds_name or ds_name == "gsm8k" else ds_name
+            if "math" in ds_name.lower():
+                eval_name = "math"
+            elif "gsm8k" in ds_name.lower():
+                eval_name = "gsm8k"
+            elif "boolq" in ds_name.lower():
+                eval_name = "boolq"
+            else:
+                eval_name = ds_name
             temp_samples = [{"problem": p, "pred": r["slm_final_text"], "solution": dataset[idx]["answer"], "answer": dataset[idx]["answer"], "completions": [r["slm_final_text"]]} for idx, (p, r) in enumerate(zip(problems, problem_results))]
             slm_eval_samples, _ = evaluate(data_name=eval_name, prompt_type="cot", samples=temp_samples, pred_keys=["pred"])
             slm_correct_list = [s["correct_completions"][0] for s in slm_eval_samples]

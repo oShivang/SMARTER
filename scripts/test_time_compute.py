@@ -213,7 +213,7 @@ def main():
         keys = ["pred"]
 
     # Evaluation logic based on dataset
-    if config.dataset_name == "boolq":
+    if "boolq" in config.dataset_name.lower():
         logger.info("Using simple yes/no matching for BoolQ evaluation")
         def extract_bool(text):
             if not text: return ""
@@ -244,7 +244,9 @@ def main():
         correct_counts = {k: 0 for k in keys}
         samples_list = list(dataset)
         for sample in samples_list:
-            gt = str(sample["answer"]).lower().strip()
+            gt_val = sample["answer"]
+            gt = gt_val if isinstance(gt_val, str) else ("yes" if gt_val else "no")
+            gt = gt.lower().strip()
             for k in keys:
                 pred = extract_bool(sample.get(k, ""))
                 if pred == gt:
@@ -253,7 +255,14 @@ def main():
         acc = {k: round((v / len(samples_list)) * 100, 1) for k, v in correct_counts.items()}
         result = {"acc": acc, "num_samples": len(samples_list)}
     else:
-        data_type = "math" if config.dataset_name in ["math500", "sampled_math500", "prm_math500"] else config.dataset_name
+        if "math" in config.dataset_name.lower():
+            data_type = "math"
+        elif "gsm8k" in config.dataset_name.lower():
+            data_type = "gsm8k"
+        elif "boolq" in config.dataset_name.lower():
+            data_type = "boolq"
+        else:
+            data_type = config.dataset_name
         dataset, result = evaluate(data_name=data_type, prompt_type=None, samples=dataset, pred_keys=keys)
     
     # Save the final dataset
