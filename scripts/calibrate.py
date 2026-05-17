@@ -181,7 +181,12 @@ def calibrate():
                 ).eval()
             llm_tokenizer = AutoTokenizer.from_pretrained(model_path)
             
-            sampling_params = SamplingParams(temperature=config.temperature, max_tokens=config.max_tokens, top_p=config.top_p, stop=["\n\n"], n=1, logprobs=10)
+            # Use short per-step max_tokens so each 
+
+ break creates a distinct step.
+            # This ensures varied step ratios across problems → curved elbow graph.
+            step_max_tokens = 256
+            sampling_params = SamplingParams(temperature=config.temperature, max_tokens=step_max_tokens, top_p=config.top_p, stop=["\n\n"], n=1, logprobs=10)
 
             for prob_idx, problem in enumerate(problems):
                 # Print progress to prevent the appearance of being "stuck"
@@ -214,9 +219,8 @@ def calibrate():
                 llm_text = llm_tokenizer.decode(out_ids[0][input_ids.input_ids.shape[1]:], skip_special_tokens=True)
                 
                 gt = dataset[prob_idx].get("answer", dataset[prob_idx].get("solution", ""))
-                if "boolq" in ds_name.lower():
-                    gt_ans_val = dataset[prob_idx]["answer"]
-                    gt_str = gt_ans_val if isinstance(gt_ans_val, str) else ("yes" if gt_ans_val else "no")
+                if ds_name == "boolq":
+                    gt_str = "yes" if dataset[prob_idx]["answer"] else "no"
                     llm_fixable.append(gt_str == extract_bool(llm_text))
                 else:
                     temp_samples = [{"problem": problem, "pred": llm_text, "solution": gt, "answer": gt, "completions": [llm_text]}]
@@ -246,7 +250,9 @@ def calibrate():
                 dtype=dtype
             )
             print("SLM Loaded successfully.", flush=True)
-            sampling_params = SamplingParams(temperature=config.temperature, max_tokens=config.max_tokens, top_p=config.top_p, stop=["\n\n"], n=1, logprobs=10)
+            # Use short per-step max_tokens so each \n\n break creates a distinct step.
+            step_max_tokens = 256
+            sampling_params = SamplingParams(temperature=config.temperature, max_tokens=step_max_tokens, top_p=config.top_p, stop=["\n\n"], n=1, logprobs=10)
 
             print(f"Starting SLM generation for {len(problems)} problems...", flush=True)
             for prob_idx, problem in enumerate(problems):
@@ -309,9 +315,8 @@ def calibrate():
                 llm_token_counts.append(llm_out_tokens)
                 llm_text = llm_tokenizer.decode(out_ids[0][input_ids.input_ids.shape[1]:], skip_special_tokens=True)
                 gt = dataset[prob_idx].get("answer", dataset[prob_idx].get("solution", ""))
-                if "boolq" in ds_name.lower():
-                    gt_ans_val = dataset[prob_idx]["answer"]
-                    gt_str = gt_ans_val if isinstance(gt_ans_val, str) else ("yes" if gt_ans_val else "no")
+                if ds_name == "boolq":
+                    gt_str = "yes" if dataset[prob_idx]["answer"] else "no"
                     llm_fixable.append(gt_str == extract_bool(llm_text))
                 else:
                     temp_samples = [{"problem": problem, "pred": llm_text, "solution": gt, "answer": gt, "completions": [llm_text]}]
@@ -320,12 +325,8 @@ def calibrate():
             del llm; clear_gpu_memory()
 
         # --- Accuracy Evaluation & Sweeping (Common) ---
-        if "boolq" in ds_name.lower():
-            slm_correct_list = []
-            for idx, res in enumerate(problem_results):
-                gt_val = dataset[idx]["answer"]
-                gt_str = gt_val if isinstance(gt_val, str) else ("yes" if gt_val else "no")
-                slm_correct_list.append(gt_str == extract_bool(res["slm_final_text"]))
+        if ds_name == "boolq":
+            slm_correct_list = [("yes" if dataset[idx]["answer"] else "no") == extract_bool(res["slm_final_text"]) for idx, res in enumerate(problem_results)]
         else:
             if "math" in ds_name.lower():
                 eval_name = "math"
