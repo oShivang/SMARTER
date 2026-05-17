@@ -173,32 +173,14 @@ def smart_best_of_n_conf(x, config: Config, slm: LLM, llm: None, prm=None, **kwa
             
             inputs = llm_tokenizer(batch_prompts, return_tensors="pt", padding=True).to(llm.device)
             
-            # Chunk LLM generation to prevent OOM when many trajectories are triggered.
-            llm_chunk_size = 8
-            all_new_ids = []
-            for chunk_start in range(0, inputs["input_ids"].shape[0], llm_chunk_size):
-                chunk_input = {k: v[chunk_start:chunk_start+llm_chunk_size] for k, v in inputs.items()}
-                with torch.no_grad():
-                    chunk_ids = llm.generate(
-                        **chunk_input,
-                        stopping_criteria=[stopping_criteria],
-                        generation_config=generation_config
-                    )[:, chunk_input["input_ids"].shape[1]:]
-                all_new_ids.append(chunk_ids)
-                del chunk_input, chunk_ids
-                torch.cuda.empty_cache()
-            
-            # Each chunk may produce sequences of different lengths → pad to max before cat.
-            pad_id = llm_tokenizer.pad_token_id if llm_tokenizer.pad_token_id is not None else llm_tokenizer.eos_token_id
-            max_len = max(c.shape[1] for c in all_new_ids)
-            padded_chunks = []
-            for c in all_new_ids:
-                if c.shape[1] < max_len:
-                    pad = torch.full((c.shape[0], max_len - c.shape[1]), pad_id, dtype=c.dtype, device=c.device)
-                    c = torch.cat([c, pad], dim=1)
-                padded_chunks.append(c)
-            new_ids_all = torch.cat(padded_chunks, dim=0)
-            del all_new_ids, padded_chunks
+            # Single full-batch generation — requires H100 (80GB).
+            # All triggered sequences generated in one parallel GPU call for maximum speed.
+            with torch.no_grad():
+                new_ids_all = llm.generate(
+                    **inputs,
+                    stopping_criteria=[stopping_criteria],
+                    generation_config=generation_config
+                )[:, inputs["input_ids"].shape[1]:]
             
             batch_steps = llm_tokenizer.batch_decode(new_ids_all)
             
