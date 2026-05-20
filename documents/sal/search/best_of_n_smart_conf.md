@@ -82,16 +82,24 @@ All steps *before* the first bad one are accepted and added to the trajectory.
 
 #### LLM Surgical Intervention (Batched)
 If any trajectories hit a bottleneck, all their correction requests are batched:
-1. Each trajectory's current good-step text is templated into an LLM conversation.
-2. All prompts are left-padded and tokenized together.
-3. A single `llm.generate(...)` call with `StopStringCriteria` generates exactly one replacement step per trajectory.
-4. The LLM's step replaces the SLM's bad step in the trajectory's history.
+1. **Meta-Prompt Formatting**: Each trajectory's problem and current correct steps (`current_text`) are formatted using a dedicated `build_meta_conv` function. The LLM is explicitly informed in a system prompt that its output serves as a hint/next-step for a smaller language model and must be wrapped inside `\boxed{}`.
+2. **Fresh Assistant Turn**: The prompt uses `add_generation_prompt=True` and `continue_final_message=False` to start a new assistant turn rather than appending in-context.
+3. **Batched Generation**: All prompts are left-padded and tokenized together, and run through a single `llm.generate(...)` call with `StopStringCriteria`.
+4. **Boxed Step Extraction**: The raw text from `llm_tokenizer.batch_decode` is parsed using an inline `find_box()` utility. If a LaTeX `\boxed{}` is found, only the inner step is extracted; otherwise, it falls back to the raw output.
+5. **Update Trajectory**: The extracted step replaces the SLM's bad step in the trajectory's history.
 
 #### No-Bottleneck Case
 If no bad step is found in a trajectory, all generated steps are accepted and the trajectory is marked `completed = True`.
 
 ### Output Formatting
-After all iterations, the results are grouped by problem, and the trajectory with the highest aggregate confidence score is selected as `pred`.
+After all iterations, the results are grouped by problem and a **weighted voting** strategy is applied to select the final `pred`:
+
+1. **Answer Extraction**: `extract_answer(completion, dataset_name)` (from `sal.utils.qwen_math_parser`) is called on every candidate completion to pull the final boxed answer.
+2. **Grouping**: All completions that produced the same extracted answer are grouped together.
+3. **Score Summation**: Each group's total weight is computed as the **sum of aggregate confidence scores** of all completions that landed in that group.
+4. **Best Group Selection**: The answer group with the highest summed score is selected as the winner.
+5. **Completion Return**: The full completion text with the highest individual score within the winning group is returned as `pred` (not just the answer string), preserving compatibility with downstream graders.
+6. **Fallback**: If `extract_answer` returns empty for all completions, the pipeline falls back to naive `argmax` on aggregate scores.
 
 ---
 
@@ -101,3 +109,4 @@ After all iterations, the results are grouped by problem, and the trajectory wit
 - The **tokenizer cache** (`_TOKENIZER_CACHE`) is critical for performance: loading the LLM tokenizer from disk on every call would add seconds of overhead per batch.
 - The `prm_update` field (used by PRM-based SMART variants) is **not populated** here — confidence scores are stored in `all_scores` instead.
 - `config.num_iterations` acts as a **safety cap**: even if not all trajectories are done, the loop exits to prevent infinite generation on degenerate inputs.
+- **Weighted voting** outperforms naive `argmax` by combining both the confidence of individual paths and the consensus of multiple paths converging to the same answer.

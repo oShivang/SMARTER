@@ -25,6 +25,43 @@ from sal.config import Config
 from sal.utils.score import aggregate_scores, calculate_confidence_score, STRATEGY_MAP, needs_correction
 from sal.search.utils import build_conv
 
+def find_box(pred_str: str):
+    if "boxed" not in pred_str:
+        return None
+    ans = pred_str.split("boxed")[-1]
+    if not ans:
+        return ""
+    if ans[0] == "{":
+        stack = 1
+        a = ""
+        for c in ans[1:]:
+            if c == "{":
+                stack += 1
+                a += c
+            elif c == "}":
+                stack -= 1
+                if stack == 0:
+                    break
+                a += c
+            else:
+                a += c
+    else:
+        a = ans.split("$")[0].strip()
+    return a
+
+def build_meta_conv(prompt: str, response: str | None) -> list[dict[str, str]]:
+    meta_system_prompt = (
+        "You are an advanced AI helping a smaller language model (SLM) solve a math problem. "
+        "The SLM got stuck and we rolled back its incorrect reasoning. Below is the problem and the correct steps so far. "
+        "Your task is to generate the SINGLE next step (the most critical mathematical leap) that will guide the SLM to finish the problem correctly. "
+        "You MUST put this next step inside a LaTeX box like: \\boxed{your_step}."
+    )
+    user_content = f"Problem:\n{prompt}\n\nCorrect steps so far:\n{response if response else ''}\n\nPlease generate the next step and put it inside \\boxed{{}}."
+    return [
+        {"role": "system", "content": meta_system_prompt},
+        {"role": "user", "content": user_content}
+    ]
+
 _TOKENIZER_CACHE = {}
 
 def get_cached_tokenizer(model_path):
@@ -143,7 +180,7 @@ def smart_best_of_n_conf(x, config: Config, slm: LLM, llm: None, prm=None, **kwa
                     
                 bad_text, _ = steps[first_bad_step_idx]
                 
-                current_conv = build_conv(traj["prompt"], traj["current_text"], config.system_prompt)
+                current_conv = build_meta_conv(traj["prompt"], traj["current_text"])
                 fixes_needed.append((traj, bad_text, bad_step_score, current_conv))
                 
             else:
@@ -163,7 +200,7 @@ def smart_best_of_n_conf(x, config: Config, slm: LLM, llm: None, prm=None, **kwa
             batch_prompts = []
             for traj, slm_text, slm_score, conv in fixes_needed:
                 templated = llm_tokenizer.apply_chat_template(
-                    conv, tokenize=False, add_generation_prompt=add_gen_prompt, continue_final_message=cont_final_msg
+                    conv, tokenize=False, add_generation_prompt=True, continue_final_message=False
                 )
                 batch_prompts.append(templated)
             
@@ -182,10 +219,15 @@ def smart_best_of_n_conf(x, config: Config, slm: LLM, llm: None, prm=None, **kwa
                     generation_config=generation_config
                 )[:, inputs["input_ids"].shape[1]:]
             
-            batch_steps = llm_tokenizer.batch_decode(new_ids_all)
+            batch_steps = llm_tokenizer.batch_decode(new_ids_all, skip_special_tokens=True)
             
             for j, (traj, slm_text, slm_score, conv) in enumerate(fixes_needed):
-                llm_step = batch_steps[j]
+                raw_llm_step = batch_steps[j]
+                boxed = find_box(raw_llm_step)
+                llm_step = boxed if boxed is not None else raw_llm_step
+                
+                if not llm_step.endswith("\n\n"):
+                    llm_step += "\n\n"
                 
                 if not llm_step or llm_step.strip() == "":
                     llm_step = "\n\n"
@@ -202,17 +244,46 @@ def smart_best_of_n_conf(x, config: Config, slm: LLM, llm: None, prm=None, **kwa
                     traj["completed"] = True
             logger.info("LLM batch generation complete. Resuming SLM generation for remaining steps...")
                     
-    logger.info("Batch completed. Selecting final predictions based on confidence scores...")
+    logger.info("Batch completed. Selecting final predictions using weighted voting...")
     
     # Format output
     completions = [[] for _ in range(len(x["problem"]))]
     agg_scores = [[] for _ in range(len(x["problem"]))]
+    pred = []
+    
     for i, problem in enumerate(x["problem"]):
         problem_trajs = [t for t in trajectories if t["prompt"] == problem]
         completions[i] = [t["current_text"] for t in problem_trajs]
-        agg_scores[i] = [aggregate_scores(t["all_scores"], config.agg_strategy) if len(t["all_scores"]) > 0 else 0 for t in problem_trajs]
+        agg_scores[i] = [
+            aggregate_scores(t["all_scores"], config.agg_strategy) if len(t["all_scores"]) > 0 else 0.0
+            for t in problem_trajs
+        ]
         
-    pred = [comp[np.argmax(s)] for comp, s in zip(completions, agg_scores)]
+        # Weighted voting: extract final answer from each completion,
+        # group by answer, sum confidence scores per group, pick best.
+        from sal.utils.qwen_math_parser import extract_answer
+        
+        answer_scores: dict[str, float] = {}
+        answer_to_completion: dict[str, str] = {}
+        
+        for comp, score_val in zip(completions[i], agg_scores[i]):
+            ans = extract_answer(comp, config.dataset_name).strip()
+            if not ans:
+                continue
+            answer_scores[ans] = answer_scores.get(ans, 0.0) + score_val
+            # Keep the completion with the highest individual score for this answer
+            if ans not in answer_to_completion or score_val > answer_scores.get(ans + "__best_score__", -1e9):
+                answer_to_completion[ans] = comp
+                answer_scores[ans + "__best_score__"] = score_val
+
+        if answer_scores:
+            # Filter out the helper __best_score__ keys before finding argmax
+            real_answers = {k: v for k, v in answer_scores.items() if not k.endswith("__best_score__")}
+            best_answer = max(real_answers, key=real_answers.__getitem__)
+            pred.append(answer_to_completion[best_answer])
+        else:
+            # Fallback: naive argmax on aggregate scores
+            pred.append(completions[i][int(np.argmax(agg_scores[i]))])
 
     x["completions"] = completions
     x["pred"] = pred

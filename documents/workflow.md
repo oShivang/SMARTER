@@ -66,14 +66,25 @@ flowchart TD
 
 ## Execution Modes & Entry Points
 
-The SMARTER repository supports two distinct execution flows depending on the desired operation mode:
+The SMARTER repository supports three execution flows:
 
-### A. Speculative Decoding Search & Calibration Flow (`src/sal/`)
-* **Entry Scripts**: `test_time_compute.py` or `calibrate.py` (see [best_of_n.md](file:///Users/shivangkarthikey/Desktop/BTP_sem4/SMARTER/documents/sal/search/best_of_n.md)).
-* **Focus**: Executes token-level speculatively mediated search (SMART), calling generator models, scorer checkpoints, and trigger gates.
-* **Ingestion**: Directly uses `src/sal/utils/data.py` (which formats targets and incorporates reading comprehension setups like BoolQ few-shot prompts).
+### A. Full Benchmark Pipeline (`scripts/run_final_benchmark.sh`)
+The master pipeline runs three phases end-to-end for all datasets (BoolQ, GSM8K, MATH-500):
 
-### B. Offline Baseline Evaluation Flow (`src/evaluation/`)
+| Phase | Script | What it does |
+|---|---|---|
+| **1. Calibration** | `scripts/calibrate.py` | Sweeps thresholds on 100 samples, picks best method+threshold per dataset via **utility maximization** elbow selection |
+| **2a. SMART** | `scripts/test_time_compute.py` | Runs SLM+LLM speculative decoding with the calibrated threshold |
+| **2b. SLM 1-shot** | `scripts/test_time_compute.py` | Runs the SLM alone with `n=1` and no SMART intervention (baseline) |
+| **2c. LLM 1-shot** | `scripts/test_time_compute.py` | Runs the LLM alone with `n=1` and no SMART intervention (upper-bound baseline) |
+| **3. Report Card** | `scripts/generate_report.py` | Reads all result files and prints a formatted comparison table |
+
+The report card shows per-dataset: **calibrated method**, **threshold**, **projected cost & accuracy**, **SLM 1-shot accuracy**, **LLM 1-shot accuracy**, **SMART accuracy**, and **actual SMART LLM cost**.
+
+### B. Mini Test (`scripts/run_mini_test.sh`)
+Identical three-phase pipeline but runs on only **5 samples** with both SLM and LLM set to **Qwen2.5-1.5B-Instruct**. Used for quick end-to-end logic verification on any hardware.
+
+### C. Offline Baseline Evaluation (`src/evaluation/`)
 * **Entry Script**: `math_eval.py` (see [math_eval.md](file:///Users/shivangkarthikey/Desktop/BTP_sem4/SMARTER/documents/evaluation/math_eval.md)).
 * **Focus**: Evaluates basic model prompting capability (standard Chain-of-Thought, Program-Aided Language, or Tool-use).
 * **Ingestion & Output**: Orchestrates data caching (via `data_loader.py`), few-shot formatting (via `examples.py`), interactive Python execution loops, and grades final completions (via `evaluate.py` and `grader.py`).
