@@ -42,8 +42,29 @@ def get_dataset(config: Config) -> Dataset:
     elif config.dataset_name == "boolq":
         split = "validation" if config.dataset_split == "test" else config.dataset_split
         dataset = load_dataset("google/boolq", split=split)
+        
+        # Load few-shot examples from evaluation/examples.py
+        import sys
+        from pathlib import Path
+        eval_path = str(Path(__file__).parent.parent.parent / "evaluation")
+        if eval_path not in sys.path:
+            sys.path.append(eval_path)
+        from examples import get_examples
+        
+        instructions = (
+            "You are an agent asked to answer questions based on the provided passages. "
+            "Please read the passage, reason step-by-step, and answer the question with 'yes' or 'no'. "
+            "Always conclude your reasoning with the format 'Therefore, the final answer is: \\boxed{answer}' where answer is either 'yes' or 'no'.\n\n"
+            "Here are some examples you may refer to:\n\n---\n\n"
+        )
+        
+        boolq_examples = get_examples().get("boolq", [])
+        few_shot_prefix = instructions
+        for eq, ea in boolq_examples:
+            few_shot_prefix += f"Question: {eq}\nAnswer: {ea}\n\n---\n\n"
+
         dataset = dataset.map(lambda x: {
-            "problem": f"Passage: {x['passage']}\nQuestion: {x['question']}\n\nBased on the passage, is the answer to the question 'yes' or 'no'? Provide your reasoning and end with 'Therefore, the final answer is: \\boxed{{answer}}'.",
+            "problem": few_shot_prefix + f"Question: Passage: {x['passage']}\nQuestion: {x['question']}\n\nBased on the passage, is the answer to the question 'yes' or 'no'? Provide your reasoning and end with 'Therefore, the final answer is: \\boxed{{answer}}'.\nAnswer: ",
             "answer": "yes" if x["answer"] else "no"
         })
     else:

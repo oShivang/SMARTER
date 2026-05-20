@@ -1,0 +1,7 @@
+# SMARTER local gitignore
+notes/
+__pycache__/
+*.pyc
+.DS_Store
+*.jsonl
+*.log

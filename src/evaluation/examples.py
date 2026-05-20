@@ -375,4 +375,27 @@ def get_examples():
         ),
     ]
 
+    examples["boolq"] = [
+        (
+            "Passage: Persian (pronounced /ˈpɜːrʒən, -ʃən/), also known by its endonym Farsi (فارسی fārsi), is primarily spoken in Iran, Afghanistan, and Tajikistan.\nQuestion: do they speak farsi in iran?\n\nBased on the passage, is the answer to the question 'yes' or 'no'? Provide your reasoning and end with 'Therefore, the final answer is: \\boxed{answer}'.",
+            "The passage states that Persian is also known by its endonym Farsi and is primarily spoken in Iran. Thus, it is spoken in Iran. Therefore, the final answer is: \\boxed{yes}"
+        ),
+        (
+            "Passage: The Union of Soviet Socialist Republics (USSR) was a federal sovereign state in northern Eurasia that existed from 1922 to 1991. Nominally a union of multiple national Soviet republics, in practice its government and economy were highly centralized until its final years.\nQuestion: is soviet union same as ussr?\n\nBased on the passage, is the answer to the question 'yes' or 'no'? Provide your reasoning and end with 'Therefore, the final answer is: \\boxed{answer}'.",
+            "The passage indicates that the USSR stands for the Union of Soviet Socialist Republics, which is commonly referred to as the Soviet Union. Therefore, the final answer is: \\boxed{yes}"
+        ),
+        (
+            "Passage: The system of names for organic chemical compounds is called IUPAC nomenclature. In this system, methane is the simplest alkane with the chemical formula CH4. It has a single carbon atom bonded to four hydrogen atoms.\nQuestion: does methane have oxygen in it?\n\nBased on the passage, is the answer to the question 'yes' or 'no'? Provide your reasoning and end with 'Therefore, the final answer is: \\boxed{answer}'.",
+            "According to the passage, methane has the chemical formula CH4, consisting of a single carbon atom and four hydrogen atoms. It contains no oxygen atoms. Therefore, the final answer is: \\boxed{no}"
+        ),
+        (
+            "Passage: The moon orbits the Earth once every 27.3 days relative to the stars. Because the Earth is also moving around the sun, the time between new moons is slightly longer, at 29.5 days.\nQuestion: does it take 30 days for the moon to orbit the earth?\n\nBased on the passage, is the answer to the question 'yes' or 'no'? Provide your reasoning and end with 'Therefore, the final answer is: \\boxed{answer}'.",
+            "The passage states that the moon orbits the Earth once every 27.3 days (or 29.5 days between new moons), which is less than 30 days. Therefore, the final answer is: \\boxed{no}"
+        ),
+        (
+            "Passage: Photosynthesis is a process used by plants and other organisms to convert light energy into chemical energy that can later be released to fuel the organisms' activities. This chemical energy is stored in carbohydrate molecules, such as sugars.\nQuestion: do plants make sugar during photosynthesis?\n\nBased on the passage, is the answer to the question 'yes' or 'no'? Provide your reasoning and end with 'Therefore, the final answer is: \\boxed{answer}'.",
+            "The passage states that photosynthesis stores chemical energy in carbohydrate molecules, such as sugars, meaning plants make sugar during this process. Therefore, the final answer is: \\boxed{yes}"
+        )
+    ]
+
     return examples
