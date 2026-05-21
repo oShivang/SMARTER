@@ -28,7 +28,8 @@ python scripts/calibrate.py \
     --num_calibration_samples 100 \
     --num_full_samples 0 \
     --datasets "boolq,gsm8k,math500" \
-    --elbow_method "utility" # choices: ["greedy", "kneedle", "slope", "utility"]
+    --elbow_method "utility" \
+    "$@"
 
 echo ""
 echo "✅ Calibration complete."

@@ -10,6 +10,7 @@ This folder mirrors the structure of `src/` and contains detailed Markdown docum
 documents/
 ├── README.md                          ← This file (index)
 ├── workflow.md                        ← Overall project workflow & architecture diagram
+├── calibration.md                     ← Threshold calibration process & elbow methods
 │
 ├── sal/
     ├── config.md                      ← Global config dataclass (all hyperparameters)
@@ -67,6 +68,7 @@ documents/
 1. Understand the **`sal/config.md`** — all hyperparameters are defined here.
 2. Use **`sal/utils/parser.md`** to see how YAML configs and CLI flags are parsed.
 3. Read **`sal/utils/data.md`** to understand which datasets are supported and how they are loaded.
+4. Read **`calibration.md`** to see how threshold grid searches are executed and resolved.
 
 ### Understanding the Search Algorithms
 The search algorithms come in an 8-way matrix:

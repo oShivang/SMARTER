@@ -42,10 +42,29 @@ class H4ArgumentParser(HfArgumentParser):
         arg_list = self.parse_yaml_file(os.path.abspath(yaml_arg))
 
         outputs = []
-        # strip other args list into dict of key-value pairs
-        other_args = {
-            arg.split("=")[0].strip("-"): arg.split("=")[1] for arg in other_args
-        }
+        # Parse other_args robustly, supporting --key=val, --key val, and --boolean_flag
+        parsed_args = {}
+        i = 0
+        while i < len(other_args):
+            arg = other_args[i]
+            if "=" in arg:
+                key, val = arg.split("=", 1)
+                parsed_args[key.lstrip("-")] = val
+                i += 1
+            elif arg.startswith("-"):
+                key = arg.lstrip("-")
+                # If the next element exists and doesn't start with "-", treat it as the value
+                if i + 1 < len(other_args) and not other_args[i + 1].startswith("-"):
+                    parsed_args[key] = other_args[i + 1]
+                    i += 2
+                else:
+                    # Otherwise, treat it as a boolean flag (implicitly true)
+                    parsed_args[key] = "true"
+                    i += 1
+            else:
+                # Skip positional or system arguments (like Jupyter kernel flags)
+                i += 1
+        other_args = parsed_args
         used_args = {}
 
         # overwrite the default/loaded value with the value provided to the command line

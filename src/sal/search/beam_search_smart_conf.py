@@ -27,6 +27,44 @@ from .utils import Beam, build_conv, generate_k_steps_with_responses, last, gene
 logger = logging.getLogger()
 from sal.utils.score import aggregate_scores, calculate_confidence_score, STRATEGY_MAP, needs_correction
 
+def find_box(pred_str: str):
+    if "boxed" not in pred_str:
+        return None
+    ans = pred_str.split("boxed")[-1]
+    if not ans:
+        return ""
+    if ans[0] == "{":
+        stack = 1
+        a = ""
+        for c in ans[1:]:
+            if c == "{":
+                stack += 1
+                a += c
+            elif c == "}":
+                stack -= 1
+                if stack == 0:
+                    break
+                a += c
+            else:
+                a += c
+    else:
+        a = ans.split("$")[0].strip()
+    return a
+
+def build_meta_conv(prompt: str, response: str | None) -> list[dict[str, str]]:
+    meta_system_prompt = (
+        "You are an advanced AI helping a smaller language model (SLM) solve a math problem. "
+        "The SLM generated a draft response, but it made a logical or mathematical mistake in the next step. "
+        "Your task is to provide the single next step that is mathematically correct and provides a useful hint. "
+        "Do NOT write the whole rest of the solution. Generate ONLY the single correct next step. "
+        "You MUST put this next step inside a LaTeX box like: \\boxed{your_step}."
+    )
+    user_content = f"Problem:\n{prompt}\n\nCorrect steps so far:\n{response if response else ''}\n\nPlease generate the next step and put it inside \\boxed{{}}."
+    return [
+        {"role": "system", "content": meta_system_prompt},
+        {"role": "user", "content": user_content}
+    ]
+
 def _beam_search(batch_of_prompts, config: Config, slm: LLM, llm: None) -> tuple:
     logger.info("Starting initial SLM generation for beam search...")
     sampling_params = SamplingParams(
@@ -221,11 +259,11 @@ def _beam_search(batch_of_prompts, config: Config, slm: LLM, llm: None) -> tuple
         re_beams = [prev_active_beams[idx] for idx in re_indices]          
         
         convs = [
-            build_conv(b.prompt, b.current_text, config.system_prompt)
+            build_meta_conv(b.prompt, b.current_text)
             for b in re_beams
         ]
-        continue_final_message = iterate_idx > 0
-        add_generation_prompt = iterate_idx == 0
+        continue_final_message = False
+        add_generation_prompt = True
         
         # Move tokenizer loading outside or cache it
         from transformers import AutoTokenizer
@@ -248,12 +286,22 @@ def _beam_search(batch_of_prompts, config: Config, slm: LLM, llm: None) -> tuple
 
         reprompts, recompletions = [], []
         for beam, gen_result in zip(re_beams, gen_results, strict=True):
-            # update the beam
-            beam.next_texts = gen_result.next_texts
+            # update the beam using metadata prompting & extraction
+            raw_llm_step = gen_result.next_texts[0]
+            boxed = find_box(raw_llm_step)
+            llm_step = boxed if boxed is not None else raw_llm_step
+            
+            if not llm_step.endswith("\n\n"):
+                llm_step += "\n\n"
+                
+            if not llm_step or llm_step.strip() == "":
+                llm_step = "\n\n"
+
+            beam.next_texts = [llm_step]
             beam.stop_reasons = gen_result.stop_reasons
             beam.lookahead_texts = gen_result.lookahead_texts
-            beam.current_text += beam.next_texts[0]
-            beam.history.append(beam.next_texts[0])
+            beam.current_text += llm_step
+            beam.history.append(llm_step)
 
             if (
                 beam.stop_reasons[0] == "EOS"

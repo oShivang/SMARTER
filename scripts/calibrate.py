@@ -94,6 +94,9 @@ def calibrate():
     parser.add_argument("--datasets", type=str, default="math500,gsm8k,boolq")
     parser.add_argument("--gpu_memory_utilization", type=float, default=None)
     parser.add_argument("--load_in_4bit", action="store_true")
+    parser.add_argument("--elbow_method", type=str, default="greedy", choices=["greedy", "kneedle", "slope", "utility"], help="Method to select the optimal threshold")
+    parser.add_argument("--elbow_slope_theta", type=float, default=0.5, help="Theta for slope threshold method (acc gain per 1% cost)")
+    parser.add_argument("--elbow_utility_lambda", type=float, default=0.5, help="Lambda for utility maximization (cost penalty)")
     args, unknown = parser.parse_known_args()
 
     # Load config
@@ -431,14 +434,49 @@ def calibrate():
                 cost = np.mean(problem_token_ratios) * 100
                 accs.append(accuracy); costs.append(cost)
             
-            # Find the best threshold for this method
-            # We want highest accuracy. If tied, we want lowest cost.
+            # Find the best threshold for this method based on elbow_method
             best_idx = 0
-            for idx in range(len(accs)):
-                if accs[idx] > accs[best_idx]:
-                    best_idx = idx
-                elif accs[idx] == accs[best_idx] and costs[idx] < costs[best_idx]:
-                    best_idx = idx
+            # Ensure arrays are sorted by cost for geometric calculations
+            sort_idx = np.argsort(costs)
+            sorted_costs = np.array(costs)[sort_idx]
+            sorted_accs = np.array(accs)[sort_idx]
+            
+            if args.elbow_method == "kneedle":
+                p1 = np.array([sorted_costs[0], sorted_accs[0]])
+                p2 = np.array([sorted_costs[-1], sorted_accs[-1]])
+                line_vec = p2 - p1
+                line_len = np.linalg.norm(line_vec)
+                if line_len > 0:
+                    line_unit_vec = line_vec / line_len
+                    distances = []
+                    for i in range(len(sorted_costs)):
+                        p3 = np.array([sorted_costs[i], sorted_accs[i]])
+                        p3_p1 = p3 - p1
+                        dist = np.linalg.norm(p3_p1 - np.dot(p3_p1, line_unit_vec) * line_unit_vec)
+                        distances.append(dist)
+                    best_idx_sorted = np.argmax(distances)
+                    best_idx = sort_idx[best_idx_sorted]
+            elif args.elbow_method == "slope":
+                best_idx_sorted = 0
+                for i in range(1, len(sorted_costs)):
+                    d_cost = sorted_costs[i] - sorted_costs[i-1]
+                    d_acc = sorted_accs[i] - sorted_accs[i-1]
+                    if d_cost > 0:
+                        slope = d_acc / d_cost
+                        if slope >= args.elbow_slope_theta:
+                            best_idx_sorted = i
+                        else:
+                            break
+                best_idx = sort_idx[best_idx_sorted]
+            elif args.elbow_method == "utility":
+                utilities = np.array(accs) - args.elbow_utility_lambda * np.array(costs)
+                best_idx = np.argmax(utilities)
+            else: # greedy
+                for idx in range(len(accs)):
+                    if accs[idx] > accs[best_idx]:
+                        best_idx = idx
+                    elif accs[idx] == accs[best_idx] and costs[idx] < costs[best_idx]:
+                        best_idx = idx
             
             if accs[best_idx] > best_ds_config["acc"] or (accs[best_idx] == best_ds_config["acc"] and costs[best_idx] < best_ds_config["cost"]):
                 best_ds_config = {"method": method, "threshold": thresholds[best_idx], "acc": accs[best_idx], "cost": costs[best_idx]}

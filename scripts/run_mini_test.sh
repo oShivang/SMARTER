@@ -30,7 +30,8 @@ python scripts/calibrate.py \
     --datasets "gsm8k,math500,boolq" \
     --elbow_method "utility" \
     --model_path="$MINI_MODEL" \
-    --draft_model_path="$MINI_MODEL"
+    --draft_model_path="$MINI_MODEL" \
+    "$@"
 
 echo ""
 echo "✅ Calibration complete."

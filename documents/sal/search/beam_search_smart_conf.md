@@ -80,7 +80,11 @@ re_indices = [top_idx for top_idx in top_indices
 - For `top_2_diff`: `score < threshold` means correction needed (ambiguous top tokens)
 
 #### LLM Regeneration
-For flagged beams, `prev_active_beams[idx]` (the state *before* the current SLM step) is used. `generate_k_steps_for_llm()` generates a replacement step via HuggingFace's `model.generate()` with `StopStringCriteria`.
+For flagged beams, the state *before* the current SLM step (`prev_active_beams[idx]`) is used to construct the prompt:
+1. **Meta-Prompt Formatting**: The problem and current correct steps (`current_text`) are structured using a dedicated `build_meta_conv` function instructing the LLM that it is helping a smaller model and must wrap the single next step inside `\boxed{}`.
+2. **Fresh Assistant Turn**: Prompt template uses `add_generation_prompt=True` and `continue_final_message=False` to start a new assistant turn.
+3. **Step Generation**: `generate_k_steps_for_llm()` generates a replacement step using HuggingFace's `model.generate()` with `StopStringCriteria`.
+4. **Boxed Step Extraction**: The output is parsed using an inline `find_box()` utility to isolate the correct step from any surrounding conversational text, falling back to the raw response if no LaTeX box is found.
 
 #### Metadata Logging
 Per corrected beam:
