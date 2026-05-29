@@ -495,6 +495,8 @@ def main():
         
         problem_results = []
         for prob_idx, problem in enumerate(problems):
+            if (prob_idx + 1) % 20 == 0 or prob_idx == 0 or (prob_idx + 1) == len(problems):
+                print(f"  [SLM Calibration] Generating sample {prob_idx + 1}/{len(problems)}...", flush=True)
             current_text = ""
             steps_info = []
             for i in range(calib_config_ds.num_iterations):
@@ -582,18 +584,27 @@ def main():
             decoded = llm_tokenizer.batch_decode(out_ids[:, input_len:], skip_special_tokens=True)
             llm_outputs.extend(decoded)
             
-        llm_fixable = []
-        for prob_idx, problem in enumerate(problems):
-            llm_text = llm_outputs[prob_idx]
-            gt = answers[prob_idx]
-            if ds_name == "boolq":
+        if ds_name == "boolq":
+            llm_fixable = []
+            for prob_idx, problem in enumerate(problems):
+                llm_text = llm_outputs[prob_idx]
+                gt = answers[prob_idx]
                 gt_str = "yes" if gt else "no"
                 llm_fixable.append(gt_str == extract_bool(llm_text))
-            else:
-                eval_name = "math" if "math" in ds_name.lower() else ("gsm8k" if "gsm8k" in ds_name.lower() else ds_name)
-                temp_samples = [{"problem": problem, "pred": llm_text, "solution": gt, "answer": gt, "completions": [llm_text]}]
-                _, llm_eval = evaluate(data_name=eval_name, prompt_type="cot", samples=temp_samples, pred_keys=["pred"])
-                llm_fixable.append(llm_eval["acc"]["pred"] > 0)
+        else:
+            eval_name = "math" if "math" in ds_name.lower() else ("gsm8k" if "gsm8k" in ds_name.lower() else ds_name)
+            temp_samples = [
+                {
+                    "problem": p,
+                    "pred": out,
+                    "solution": ans,
+                    "answer": ans,
+                    "completions": [out]
+                }
+                for p, out, ans in zip(problems, llm_outputs, answers)
+            ]
+            llm_eval_samples, _ = evaluate(data_name=eval_name, prompt_type="cot", samples=temp_samples, pred_keys=["pred"])
+            llm_fixable = [s["correct_completions"][0] for s in llm_eval_samples]
                 
         # Perform threshold elbow sweep
         ds_summary = run_calibration_elbow(
