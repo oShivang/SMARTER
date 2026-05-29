@@ -109,7 +109,9 @@ def smart_best_of_n_conf(x, config: Config, slm: LLM, llm: None, prm=None, **kwa
                 "completed": False,
                 "all_scores": [],
                 "smart_step": [],
-                "gen_update": []
+                "gen_update": [],
+                "llm_tokens": [],
+                "total_tokens": 0
             })
             
     strategy_idx = STRATEGY_MAP.get(config.conf_strategy, 2)
@@ -175,6 +177,7 @@ def smart_best_of_n_conf(x, config: Config, slm: LLM, llm: None, prm=None, **kwa
                     text, logprob_list = steps[step_idx]
                     traj["history"].append(text)
                     traj["current_text"] += text
+                    traj["total_tokens"] += len(logprob_list)
                     conf_metrics = calculate_confidence_score(logprob_list)
                     traj["all_scores"].append(conf_metrics[strategy_idx])
                     
@@ -189,6 +192,7 @@ def smart_best_of_n_conf(x, config: Config, slm: LLM, llm: None, prm=None, **kwa
                     text, logprob_list = steps[step_idx]
                     traj["history"].append(text)
                     traj["current_text"] += text
+                    traj["total_tokens"] += len(logprob_list)
                     conf_metrics = calculate_confidence_score(logprob_list)
                     traj["all_scores"].append(conf_metrics[strategy_idx])
                     
@@ -226,6 +230,8 @@ def smart_best_of_n_conf(x, config: Config, slm: LLM, llm: None, prm=None, **kwa
                 boxed = find_box(raw_llm_step)
                 llm_step = boxed if boxed is not None else raw_llm_step
                 
+                llm_tok_count = len(new_ids_all[j])
+                
                 if not llm_step.endswith("\n\n"):
                     llm_step += "\n\n"
                 
@@ -239,6 +245,8 @@ def smart_best_of_n_conf(x, config: Config, slm: LLM, llm: None, prm=None, **kwa
                 
                 traj["smart_step"].append(iterate_idx)
                 traj["gen_update"].append((slm_text, llm_step))
+                traj["llm_tokens"].append(llm_tok_count)
+                traj["total_tokens"] += llm_tok_count
                 
                 if not llm_step.endswith("\n\n") and len(new_ids_all[j]) >= config.max_tokens:
                     traj["completed"] = True
@@ -250,6 +258,8 @@ def smart_best_of_n_conf(x, config: Config, slm: LLM, llm: None, prm=None, **kwa
     completions = [[] for _ in range(len(x["problem"]))]
     agg_scores = [[] for _ in range(len(x["problem"]))]
     pred = []
+    llm_tokens_col = []
+    total_tokens_col = []
     
     for i, problem in enumerate(x["problem"]):
         problem_trajs = [t for t in trajectories if t["prompt"] == problem]
@@ -258,6 +268,16 @@ def smart_best_of_n_conf(x, config: Config, slm: LLM, llm: None, prm=None, **kwa
             aggregate_scores(t["all_scores"], config.agg_strategy) if len(t["all_scores"]) > 0 else 0.0
             for t in problem_trajs
         ]
+        
+        # Collect llm_tokens and total_tokens for this problem
+        problem_llm_tokens = []
+        problem_total_tokens = 0
+        for t in problem_trajs:
+            problem_llm_tokens.extend([tok for tok in t.get("llm_tokens", []) if tok > 0])
+            problem_total_tokens += t.get("total_tokens", 0)
+            
+        llm_tokens_col.append(problem_llm_tokens)
+        total_tokens_col.append(problem_total_tokens)
         
         # Weighted voting: extract final answer from each completion,
         # group by answer, sum confidence scores per group, pick best.
@@ -287,5 +307,7 @@ def smart_best_of_n_conf(x, config: Config, slm: LLM, llm: None, prm=None, **kwa
 
     x["completions"] = completions
     x["pred"] = pred
+    x["llm_tokens"] = llm_tokens_col
+    x["total_tokens"] = total_tokens_col
 
     return x

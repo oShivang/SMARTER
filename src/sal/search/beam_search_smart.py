@@ -310,7 +310,7 @@ def smart_beam_search(examples, config: Config, slm: LLM, prm: PRM, llm: None):
     for results in beam_results:
         grouped_results[results.prompt].append(results)
 
-    results = {"completions": [], "pred": []}
+    results = {"completions": [], "pred": [], "llm_tokens": [], "total_tokens": []}
     tokenizer = slm.get_tokenizer()
 
     for p in problems:
@@ -321,4 +321,15 @@ def smart_beam_search(examples, config: Config, slm: LLM, prm: PRM, llm: None):
         ])]
         results["completions"].append(completions)
         results["pred"].append(pred)
+        
+        # Aggregate llm_tokens and total_tokens for this problem
+        problem_llm_tokens = []
+        problem_total_tokens = 0
+        for b in beams:
+            problem_llm_tokens.extend([tok for tok in b.llm_tokens if tok > 0])
+            problem_total_tokens += sum(b.completion_tokens) + sum([tok for tok in b.llm_tokens if tok > 0])
+            
+        results["llm_tokens"].append(problem_llm_tokens)
+        results["total_tokens"].append(problem_total_tokens)
+        
     return results

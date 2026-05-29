@@ -87,6 +87,8 @@ def smart_best_of_n(x, config: Config, slm: LLM, prm: PRM, llm: None):
             for r in responses[i * config.n : (i + 1) * config.n]
             for output in r.outputs
         ]
+    llm_tokens_col = [[] for _ in range(len(x["problem"]))]
+    total_tokens_col = [sum(completion_tokens[i]) for i in range(len(x["problem"]))]
 
     # Check we generated the correct number of completions for each prompt
     for c in completions:
@@ -164,6 +166,15 @@ def smart_best_of_n(x, config: Config, slm: LLM, prm: PRM, llm: None):
             new_partial = slm_inputs[i].split(x["problem"][problem_idx])[-1].strip()
             remaining_steps = responses[i].outputs[0].text
             completions[problem_idx][candidate_idx] = new_partial + remaining_steps
+            
+            # Record LLM tokens:
+            llm_tokens_col[problem_idx].append(len(new_ids[i]))
+            
+            # Recalculate total tokens for this completion:
+            prefix_toks = len(tokenizer.encode(new_partial))
+            suffix_toks = len(responses[i].outputs[0].token_ids)
+            total_tokens_col[problem_idx] = total_tokens_col[problem_idx] - completion_tokens[problem_idx][candidate_idx] + (prefix_toks + suffix_toks)
+            completion_tokens[problem_idx][candidate_idx] = prefix_toks + suffix_toks
 
     scores = prm.score(x["problem"], completions, config.prm_batch_size)
     
@@ -176,5 +187,7 @@ def smart_best_of_n(x, config: Config, slm: LLM, prm: PRM, llm: None):
 
     x["completions"] = completions
     x["pred"] = pred
+    x["llm_tokens"] = llm_tokens_col
+    x["total_tokens"] = total_tokens_col
 
     return x
