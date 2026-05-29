@@ -697,8 +697,8 @@ def main():
     print("==================================================")
     
     # Load SLM in vLLM alongside LLM HF Causal model
-    slm_vllm = load_slm(config_test, num_gpus, device_capability, dtype, gpu_util, enforce_eager=False)
     clear_gpu_memory()
+    slm_vllm = load_slm(config_test, num_gpus, device_capability, dtype, gpu_util, enforce_eager=False)
     
     for ds_name in dataset_list:
         print(f"\n--- Running SMART Speculative Decoding on {ds_name} ---", flush=True)
