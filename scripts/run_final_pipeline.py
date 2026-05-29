@@ -244,6 +244,9 @@ def evaluate_and_save_dataset(dataset, config, is_baseline=True):
             data_type = config.dataset_name
         dataset, result = evaluate(data_name=data_type, prompt_type=None, samples=dataset, pred_keys=keys)
         
+        if isinstance(dataset, list):
+            dataset = Dataset.from_list(dataset)
+            
         # If dataset evaluation doesn't add 'correct' column, make sure it is added
         if "correct" not in dataset.column_names:
             if "correct_completions" in dataset.column_names:
