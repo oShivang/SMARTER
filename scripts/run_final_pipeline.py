@@ -46,11 +46,6 @@ APPROACHES = {
 
 def clear_gpu_memory():
     gc.collect()
-    try:
-        from vllm.distributed.parallel_state import destroy_model_parallel
-        destroy_model_parallel()
-    except Exception:
-        pass
     torch.cuda.empty_cache()
     torch.cuda.ipc_collect()
 
@@ -62,6 +57,11 @@ def unload_model(model):
             model.llm_engine.engine_core.shutdown()
         except Exception:
             pass
+    try:
+        from vllm.distributed.parallel_state import destroy_model_parallel
+        destroy_model_parallel()
+    except Exception:
+        pass
     del model
     clear_gpu_memory()
 
