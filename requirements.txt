@@ -34,8 +34,9 @@ timeout-decorator
 Pebble
 groq
 
-# ── Optional: 4-bit quant (install manually if needed, skip on A100 with full BF16) ──
-# bitsandbytes
+# ── Optional: 4-bit quant ───────────────────────────────────────────────────
+bitsandbytes
+
 
 # ── numpy MUST be last — pins <2 to prevent vllm/outlines breakage ─────────
 numpy<2.0.0

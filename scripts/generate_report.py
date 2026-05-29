@@ -20,13 +20,30 @@ def load_json(path):
         return json.load(f)
 
 def find_result_file(results_dir, tag):
-    """Search outputs/<ds>/ for a jsonl file whose name contains the tag."""
-    pattern = os.path.join(results_dir, "**", f"*{tag}*")
-    files = glob.glob(pattern, recursive=True)
-    if not files:
+    """Search results_dir and its alternate sibling (output vs outputs) for a jsonl file containing the tag."""
+    search_dirs = [results_dir]
+    normalized_dir = results_dir.replace("\\", "/")
+    if "outputs/" in normalized_dir:
+        search_dirs.append(results_dir.replace("outputs/", "output/"))
+    elif "output/" in normalized_dir:
+        search_dirs.append(results_dir.replace("output/", "outputs/"))
+        
+    matched_files = []
+    for s_dir in search_dirs:
+        if not os.path.exists(s_dir):
+            continue
+        pattern = os.path.join(s_dir, "**", "*.jsonl")
+        files = glob.glob(pattern, recursive=True)
+        for f in files:
+            if os.path.isdir(f):
+                continue
+            normalized_path = f.replace("\\", "/")
+            if tag in normalized_path:
+                matched_files.append(f)
+    if not matched_files:
         return None
     # Pick the most recently modified file
-    return sorted(files, key=os.path.getmtime)[-1]
+    return sorted(matched_files, key=os.path.getmtime)[-1]
 
 def extract_accuracy(result_path):
     """
@@ -68,8 +85,26 @@ def extract_accuracy(result_path):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--calibration_json", default="outputs/calibration/calibration_summary.json")
-    parser.add_argument("--output_dir", default="outputs")
+    
+    # Look for calibration summary in both output and outputs
+    calib_options = [
+        "outputs/calibration/calibration_summary.json",
+        "outputs/calibration_summary.json",
+        "output/calibration/calibration_summary.json",
+        "output/calibration_summary.json"
+    ]
+    default_calib = None
+    for opt in calib_options:
+        if os.path.exists(opt):
+            default_calib = opt
+            break
+            
+    default_dir = "outputs" if os.path.exists("outputs") else "output"
+    if not default_calib:
+        default_calib = os.path.join(default_dir, "calibration/calibration_summary.json")
+        
+    parser.add_argument("--calibration_json", default=default_calib)
+    parser.add_argument("--output_dir", default=default_dir)
     parser.add_argument("--smart_tag", default="smart_results", help="File tag for SMART results")
     parser.add_argument("--slm_tag", default="slm_baseline", help="File tag for SLM-only results")
     parser.add_argument("--llm_tag", default="llm_baseline", help="File tag for LLM-only results")

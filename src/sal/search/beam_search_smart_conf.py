@@ -270,6 +270,8 @@ def _beam_search(batch_of_prompts, config: Config, slm: LLM, llm: None) -> tuple
         if not hasattr(slm, '_llm_tokenizer'):
             slm._llm_tokenizer = AutoTokenizer.from_pretrained(config.model_path)
         tokenizer = slm._llm_tokenizer
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
         
         if config.custom_chat_template is not None:
             tokenizer.chat_template = config.custom_chat_template
