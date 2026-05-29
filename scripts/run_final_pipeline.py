@@ -562,7 +562,7 @@ def main():
         for i, problem in enumerate(problems):
             # Check correctness of final output directly
             conv = [
-                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "system", "content": config_calib.system_prompt},
                 {"role": "user", "content": problem}
             ]
             templated = llm_tokenizer.apply_chat_template(conv, tokenize=False, add_generation_prompt=True)
