@@ -180,6 +180,7 @@ def generate_hf_batch(problems, config, model, tokenizer, batch_size=32):
         input_len = inputs.input_ids.shape[1]
         decoded = tokenizer.batch_decode(out_ids[:, input_len:], skip_special_tokens=True)
         outputs.extend(decoded)
+        print(f"    [Heartbeat] Processed {min(i+batch_size, len(problems))}/{len(problems)} samples ({min(i+batch_size, len(problems))/len(problems)*100:.1f}%)...", flush=True)
         
     tokenizer.padding_side = orig_padding_side
     return outputs
@@ -285,6 +286,14 @@ def evaluate_and_save_dataset(dataset, config, is_baseline=True):
     return result
 
 def run_calibration_elbow(problems, problem_results, slm_correct_list, llm_fixable, ds_name, elbow_method, elbow_slope_theta, elbow_utility_lambda):
+    slm_calib_acc = sum(slm_correct_list) / len(slm_correct_list) * 100 if slm_correct_list else 0.0
+    llm_calib_acc = sum(llm_fixable) / len(llm_fixable) * 100 if llm_fixable else 0.0
+    print(f"\n==============================================")
+    print(f"🎯 Calibration Dataset Baseline Accuracies for {ds_name} ({len(problems)} samples):")
+    print(f"   SLM Calibration Accuracy: {slm_calib_acc:.2f}% ({sum(slm_correct_list)}/{len(problems)})")
+    print(f"   LLM Calibration Accuracy: {llm_calib_acc:.2f}% ({sum(llm_fixable)}/{len(problems)})")
+    print(f"==============================================\n", flush=True)
+
     print(f"Running Threshold Sweep (Elbow) for {ds_name}...", flush=True)
     method_stats = {}
     best_ds_config = {"method": None, "threshold": 0.0, "acc": 0.0, "cost": 0.0}
@@ -407,7 +416,12 @@ def run_calibration_elbow(problems, problem_results, slm_correct_list, llm_fixab
         best_ds_config = {"method": "probs_mean", "threshold": 0.0, "acc": 0.0, "cost": 0.0}
         
     print(f"\nWINNER FOR DATASET: {ds_name} | method={best_ds_config['method']} | threshold={best_ds_config['threshold']:.6f} | acc={best_ds_config['acc']:.2f}% | cost={best_ds_config['cost']:.2f}%", flush=True)
-    return {"best_config": best_ds_config, "all_methods": method_stats}
+    return {
+        "slm_calib_acc": slm_calib_acc,
+        "llm_calib_acc": llm_calib_acc,
+        "best_config": best_ds_config,
+        "all_methods": method_stats
+    }
 
 def main():
     parser = argparse.ArgumentParser()
@@ -743,8 +757,19 @@ def main():
         approach_fn = APPROACHES[approach_name]
         
         # Map SMART search using SLM in vLLM and LLM in HF Causal model
+        total_samples = len(full_dataset)
+        processed_count = 0
+        
+        def smart_approach_wrapper(batch, **kwargs):
+            nonlocal processed_count
+            res = approach_fn(batch, **kwargs)
+            batch_size = len(batch["problem"]) if "problem" in batch else len(next(iter(batch.values())))
+            processed_count += batch_size
+            print(f"    [Heartbeat] SMART speculative processing: {processed_count}/{total_samples} samples ({processed_count/total_samples*100:.1f}%)...", flush=True)
+            return res
+
         smart_ds = full_dataset.map(
-            approach_fn,
+            smart_approach_wrapper,
             batched=True,
             batch_size=smart_config_ds.search_batch_size,
             fn_kwargs={"config": smart_config_ds, "slm": slm_vllm, "prm": None, "llm": llm_hf},
