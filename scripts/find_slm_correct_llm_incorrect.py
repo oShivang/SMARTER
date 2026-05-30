@@ -175,10 +175,7 @@ def run_llm_phase(config, num_gpus, torch_dtype, load_in_4bit, hf_batch_size):
     
     batch_prompts = []
     for problem in problems:
-        conv = [
-            {"role": "system", "content": config.system_prompt},
-            {"role": "user", "content": problem}
-        ]
+        conv = build_conv(problem, "", config.system_prompt)
         templated = llm_tokenizer.apply_chat_template(conv, tokenize=False, add_generation_prompt=True)
         batch_prompts.append(templated)
         

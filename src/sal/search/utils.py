@@ -30,10 +30,11 @@ logger = logging.getLogger()
 def build_conv(
     prompt: str, response: str | None, system_prompt: str
 ) -> list[dict[str, str]]:
-    conversation = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": prompt},
-    ]
+    is_boolq = "Based on the passage, is the answer to the question" in prompt
+    conversation = []
+    if system_prompt and not is_boolq:
+        conversation.append({"role": "system", "content": system_prompt})
+    conversation.append({"role": "user", "content": prompt})
 
     if response != "":
         conversation.append({"role": "assistant", "content": response})

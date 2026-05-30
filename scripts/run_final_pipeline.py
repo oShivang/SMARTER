@@ -302,29 +302,33 @@ def run_calibration_elbow(problems, problem_results, slm_correct_list, llm_fixab
 
     for method in STRATEGY_MAP.keys():
         all_bottleneck_scores = []
-        for res in problem_results:
+        for i, res in enumerate(problem_results):
             step_scores = [step["scores"][method] for step in res["steps"]]
             if not step_scores:
-                all_bottleneck_scores.append(None)
+                all_bottleneck_scores.append(0.0 if method in ["entropy", "mean_least_3"] else 1.0)
                 continue
             
-            # Find the first bad step
-            found = False
-            for step in res["steps"]:
-                val = step["scores"][method]
-                # Default high-threshold check to find first bad step simulation
-                if needs_correction(val, 0.9 if method != "entropy" else 0.1, method):
-                    all_bottleneck_scores.append(val)
-                    found = True
-                    break
-            if not found:
-                all_bottleneck_scores.append(step_scores[0])
+            # If SLM is incorrect, but LLM step-by-step reasoning can reach the correct answer,
+            # use the worst step metric to plot the curve.
+            if not slm_correct_list[i] and llm_fixable[i]:
+                worst_val = max(step_scores) if method in ["entropy", "mean_least_3"] else min(step_scores)
+                all_bottleneck_scores.append(worst_val)
+            else:
+                # Otherwise, set to perfect score to avoid triggering
+                all_bottleneck_scores.append(0.0 if method in ["entropy", "mean_least_3"] else 1.0)
 
         valid_scores = [s for s in all_bottleneck_scores if s is not None]
         if not valid_scores:
             continue
 
-        thresholds = np.linspace(min(valid_scores), max(valid_scores), 20)
+        low = min(valid_scores)
+        high = max(valid_scores)
+        if low == high:
+            if method in ["entropy", "mean_least_3"]:
+                high = low + 0.1
+            else:
+                low = high - 0.1
+        thresholds = np.linspace(low, high, 20)
         accs, costs = [], []
         for tau in thresholds:
             correct = 0
@@ -434,7 +438,7 @@ def main():
     parser.add_argument("--load_in_4bit", action="store_true")
     parser.add_argument("--elbow_method", type=str, default="utility", choices=["greedy", "kneedle", "slope", "utility"])
     parser.add_argument("--elbow_slope_theta", type=float, default=0.5)
-    parser.add_argument("--elbow_utility_lambda", type=float, default=0.5)
+    parser.add_argument("--elbow_utility_lambda", type=float, default=1.0)
     
     args, unknown = parser.parse_known_args()
     
@@ -575,10 +579,7 @@ def main():
         batch_prompts = []
         for i, problem in enumerate(problems):
             # Check correctness of final output directly
-            conv = [
-                {"role": "system", "content": config_calib.system_prompt},
-                {"role": "user", "content": problem}
-            ]
+            conv = build_conv(problem, "", config_calib.system_prompt)
             templated = llm_tokenizer.apply_chat_template(conv, tokenize=False, add_generation_prompt=True)
             batch_prompts.append(templated)
             
@@ -619,6 +620,15 @@ def main():
             ]
             llm_eval_samples, _ = evaluate(data_name=eval_name, prompt_type="cot", samples=temp_samples, pred_keys=["pred"])
             llm_fixable = [s["correct_completions"][0] for s in llm_eval_samples]
+            
+        # Compute and print average steps
+        avg_slm_steps = sum(len(res["steps"]) for res in problem_results) / len(problem_results) if problem_results else 0.0
+        avg_llm_steps = sum(len([b for b in out.split("\n\n") if b.strip()]) for out in llm_outputs) / len(llm_outputs) if llm_outputs else 0.0
+        print(f"\n==============================================")
+        print(f"📊 Calibration Average Steps per Problem ({ds_name}):")
+        print(f"   SLM Average Steps: {avg_slm_steps:.2f}")
+        print(f"   LLM Average Steps: {avg_llm_steps:.2f}")
+        print(f"==============================================\n", flush=True)
                 
         # Perform threshold elbow sweep
         ds_summary = run_calibration_elbow(
