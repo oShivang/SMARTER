@@ -125,7 +125,7 @@ def load_hf_model(model_path, num_gpus, torch_dtype, should_load_4bit):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default="recipes/qwen_calibrate.yaml")
-    parser.add_argument("--dataset", type=str, default="gsm8k", choices=["gsm8k", "math500", "boolq"])
+    parser.add_argument("--dataset", type=str, default="boolq", choices=["gsm8k", "math500", "boolq"])
     parser.add_argument("--num_samples", type=int, default=100)
     parser.add_argument("--load_in_4bit", action="store_true")
     
