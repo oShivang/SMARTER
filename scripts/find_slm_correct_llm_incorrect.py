@@ -204,7 +204,7 @@ def run_llm_phase(config, num_gpus, torch_dtype, load_in_4bit, hf_batch_size):
         for prob_idx, problem in enumerate(problems):
             llm_text = llm_outputs[prob_idx]
             gt = answers[prob_idx]
-            gt_str = "yes" if gt else "no"
+            gt_str = gt if isinstance(gt, str) else ("yes" if gt else "no")
             llm_correct_list.append(gt_str == extract_bool(llm_text))
     else:
         eval_name = "math" if "math" in config.dataset_name.lower() else ("gsm8k" if "gsm8k" in config.dataset_name.lower() else config.dataset_name)

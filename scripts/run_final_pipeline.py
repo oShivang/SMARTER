@@ -603,7 +603,7 @@ def main():
             for prob_idx, problem in enumerate(problems):
                 llm_text = llm_outputs[prob_idx]
                 gt = answers[prob_idx]
-                gt_str = "yes" if gt else "no"
+                gt_str = gt if isinstance(gt, str) else ("yes" if gt else "no")
                 llm_fixable.append(gt_str == extract_bool(llm_text))
         else:
             eval_name = "math" if "math" in ds_name.lower() else ("gsm8k" if "gsm8k" in ds_name.lower() else ds_name)
