@@ -44,34 +44,27 @@ The core insight: **you don't need an expensive Process Reward Model (PRM)** to 
 
 SMARTER operates on an iterative **Draft → Score → Intervene** loop:
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         SMARTER Pipeline                        │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  ┌───────────┐      ┌──────────────┐      ┌──────────────────┐ │
-│  │  SLM 1.5B │ ───► │  Chunk Draft │ ───► │ Confidence Score │ │
-│  │  (Draft)  │      │  into Steps  │      │  Each Step  >= τ?│ │
-│  └───────────┘      └──────────────┘      └────────┬─────────┘ │
-│                                                    │            │
-│                              ┌─────────────────────┴──────────┐│
-│                              │  Step below threshold?          ││
-│                              │                                 ││
-│                         YES  │                          NO     ││
-│                    ┌─────────┘                   ┌────────────┘│
-│                    ▼                             ▼             │
-│           ┌────────────────┐          ┌──────────────────────┐ │
-│           │  LLM 7B        │          │ Accept Step, Proceed │ │
-│           │  Regenerates   │          │ to Next Step         │ │
-│           │  Failed Step   │          └──────────────────────┘ │
-│           └───────┬────────┘                                   │
-│                   │                                            │
-│                   ▼                                            │
-│          ┌─────────────────┐                                   │
-│          │ SLM Resumes from│                                   │
-│          │ Corrected State │                                   │
-│          └─────────────────┘                                   │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    %% Node Definitions
+    A[SLM 1.5B Generates Draft]:::slm --> B[Surgical Chunking: Split into Steps]:::step
+    B --> C[Compute Step Confidence Score]:::step
+    C --> D{Confidence >= Threshold?}:::decision
+    
+    D -- "No (Failure)" --> E[LLM 7B Surgical Intervention]:::llm
+    D -- "Yes (Pass)" --> F[Accept Step & Proceed]:::success
+    
+    E --> G[SLM Resumes from Corrected State]:::slm
+    G --> B
+    
+    F --> H[Final Response Completed]:::success
+
+    %% Custom Styles
+    classDef slm fill:#1e40af,color:#fff,stroke:#3b82f6,stroke-width:2px;
+    classDef llm fill:#9a3412,color:#fff,stroke:#ea580c,stroke-width:2px;
+    classDef step fill:#374151,color:#fff,stroke:#4b5563,stroke-width:1px;
+    classDef decision fill:#1f2937,color:#fff,stroke:#9ca3af,stroke-width:2px;
+    classDef success fill:#065f46,color:#fff,stroke:#059669,stroke-width:2px;
 ```
 
 ### Confidence Scoring Methods
